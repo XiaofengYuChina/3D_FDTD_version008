@@ -1220,8 +1220,8 @@ inline void update_polarization_subdomain(Subdomain& dom, const TwoLevelParams& 
             for (int k = 0; k < (int)NzL; ++k) {
                 size_t id = ((size_t)i * NyL + (size_t)j) * NzL + (size_t)k;
 
-                // Skip if no dipoles here
-                if (Ndip[id] < 1e-20) continue;
+                // Skip if no dipoles here (Ndip is now density [m^-3])
+                if (Ndip[id] <= 0) continue;
 
                 // Calculate population inversion term: (Ng - Nu) / Ng0
                 real Ng_frac = (Ng0[id] > 0) ? (Ng[id] - Nu[id]) / Ng0[id] : 0.0;
@@ -1277,21 +1277,24 @@ inline void update_populations_subdomain(Subdomain& dom, real dt, const TwoLevel
             for (int k = 0; k < (int)NzL; ++k) {
                 size_t id = ((size_t)i * NyL + (size_t)j) * NzL + (size_t)k;
 
-                if (Ndip[id] < 1e-20) continue;
+                // Skip cells with no gain medium (Ndip is now density [m^-3])
+                if (Ndip[id] <= 0) continue;
 
                 real Nu_curr = Nu[id];
-                real Ntotal = Ng0[id];
-                if (Ntotal < 1e-20) continue;
+                real Ntotal = Ng0[id];  // Total density [m^-3] (conserved)
+                if (Ntotal <= 0) continue;
 
-                // Stimulated term using energy-conserving RATE form
+                // Stimulated term using energy-conserving RATE form [m^-3 s^-1]
                 real E_avg = 0.5 * (Ez[id] + Ez_old[id]);
                 real delta_P = Pz[id] - Pz_prev[id];
-                real dP_dt = delta_P * inv_dt;  // Uses pre-computed 1/dt
-                real stim_rate = E_avg * dP_dt * inv_hbar_omega;
+                real dP_dt = delta_P * inv_dt;  // [C/(m²·s)]
+                real stim_rate = E_avg * dP_dt * inv_hbar_omega;  // [m^-3 s^-1]
 
-                // Rate equations
-                real dNu_dt = -inv_tau * Nu_curr - stim_rate;
-                real dNg_dt = +inv_tau * Nu_curr + stim_rate;
+                // Rate equations with correct sign (FIX #5)
+                // stim_rate > 0: absorption → Nu increases
+                // stim_rate < 0: stimulated emission → Nu decreases
+                real dNu_dt = -inv_tau * Nu_curr + stim_rate;
+                real dNg_dt = +inv_tau * Nu_curr - stim_rate;
 
                 // Forward Euler update
                 Nu[id] += dt * dNu_dt;
@@ -1458,8 +1461,9 @@ inline void parallel_update_E_with_tls(DomainDecomposition& decomp, real dt, con
     });
 }
 
-// Compute total population in upper state across all subdomains
-inline real parallel_compute_total_Nu(const DomainDecomposition& decomp) {
+// Compute integrated population in upper state across all subdomains
+// VOLUME DENSITY FORMULATION: Integrates density × dV to get atom count
+inline real parallel_compute_integrated_Nu(const DomainDecomposition& decomp) {
     if (!decomp.is_parallel()) return 0.0;
 
     real total = 0.0;
@@ -1474,9 +1478,11 @@ inline real parallel_compute_total_Nu(const DomainDecomposition& decomp) {
             for (size_t j = j_start; j < j_end; ++j) {
                 for (size_t k = k_start; k < k_end; ++k) {
                     size_t id = dom.local_idx(i, j, k);
-                    if (dom.tls_Ndip[id] > 1e-20) {
-                        total += dom.tls_Nu[id];
-                    }
+                    if (dom.tls_Ndip[id] <= 0) continue;
+
+                    // VOLUME DENSITY FORMULATION: Integrate density × cell volume
+                    real dV = dom.dx_local[i] * dom.dy_local[j] * dom.dz_local[k];
+                    total += dom.tls_Nu[id] * dV;
                 }
             }
         }
@@ -1484,8 +1490,9 @@ inline real parallel_compute_total_Nu(const DomainDecomposition& decomp) {
     return total;
 }
 
-// Compute total population in ground state across all subdomains
-inline real parallel_compute_total_Ng(const DomainDecomposition& decomp) {
+// Compute integrated population in ground state across all subdomains
+// VOLUME DENSITY FORMULATION: Integrates density × dV to get atom count
+inline real parallel_compute_integrated_Ng(const DomainDecomposition& decomp) {
     if (!decomp.is_parallel()) return 0.0;
 
     real total = 0.0;
@@ -1499,9 +1506,11 @@ inline real parallel_compute_total_Ng(const DomainDecomposition& decomp) {
             for (size_t j = j_start; j < j_end; ++j) {
                 for (size_t k = k_start; k < k_end; ++k) {
                     size_t id = dom.local_idx(i, j, k);
-                    if (dom.tls_Ndip[id] > 1e-20) {
-                        total += dom.tls_Ng[id];
-                    }
+                    if (dom.tls_Ndip[id] <= 0) continue;
+
+                    // VOLUME DENSITY FORMULATION: Integrate density × cell volume
+                    real dV = dom.dx_local[i] * dom.dy_local[j] * dom.dz_local[k];
+                    total += dom.tls_Ng[id] * dV;
                 }
             }
         }
@@ -1509,9 +1518,10 @@ inline real parallel_compute_total_Ng(const DomainDecomposition& decomp) {
     return total;
 }
 
-// Compute total inversion across all subdomains
-inline real parallel_compute_total_inversion(const DomainDecomposition& decomp) {
-    return parallel_compute_total_Nu(decomp) - parallel_compute_total_Ng(decomp);
+// Compute integrated inversion across all subdomains
+// VOLUME DENSITY FORMULATION: Returns integrated (Nu - Ng) in atoms
+inline real parallel_compute_integrated_inversion(const DomainDecomposition& decomp) {
+    return parallel_compute_integrated_Nu(decomp) - parallel_compute_integrated_Ng(decomp);
 }
 
 } // namespace ParallelV2
