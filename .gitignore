@@ -1,0 +1,28 @@
+# Build directories
+build/
+*/build/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Compiled objects
+*.o
+*.obj
+
+# Executables
+*.exe
+3D_FDTD_v008
+test_auto_mesh
+verify_mesh_override
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Output frames
+frames/

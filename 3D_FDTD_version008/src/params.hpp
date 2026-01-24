@@ -25,6 +25,15 @@
 #include "detectors.hpp"
 #include "auto_mesh_generator.hpp"
 
+// New modular sources and detectors
+#include "sources/isource.hpp"
+#include "sources/dipole_source.hpp"
+#include "sources/plane_wave_source.hpp"
+#include "detectors/idetector.hpp"
+#include "detectors/mesh_detector.hpp"
+#include "detectors/field_movie_2d.hpp"
+#include "detectors/point_field_detector.hpp"
+
 namespace Config {
 
     // -------------------------- Basic Parameters (from PhysConst) --------------------------
@@ -210,7 +219,7 @@ namespace Config {
 
     // -------------------------- Runtime --------------------------
     struct Runtime {
-        std::vector<std::unique_ptr<ISource>> sources;
+        std::vector<std::unique_ptr<Sources::ISource>> sources;
 
         // Unified detector callback functions, called once per loop iteration
         std::function<void(size_t,
@@ -788,179 +797,228 @@ namespace Config {
         });
     }
 
-    // Source package: point current in z-direction
-    // Uses PHYSICAL COORDINATES for correct placement on non-uniform meshes
-    // Waveform type read from UserConfig::SOURCE_WAVEFORM
+    // Source package: registers all sources from UserConfig
+    // Uses the new modular source system with DIPOLE_SOURCES and PLANE_WAVE_SOURCES
     inline void register_default_sources(const SimulationParams& P) {
         g_source_pkgs.push_back([&P](const SimContext& ctx, Runtime& rt) {
-            // Physical domain size (for center calculation)
-            const real phys_x_size = ctx.grid_spacing.x_bounds[ctx.NxT - ctx.npml] - ctx.grid_spacing.x_bounds[ctx.npml];
-            const real phys_y_size = ctx.grid_spacing.y_bounds[ctx.NyT - ctx.npml] - ctx.grid_spacing.y_bounds[ctx.npml];
-            const real phys_z_size = ctx.grid_spacing.z_bounds[ctx.NzT - ctx.npml] - ctx.grid_spacing.z_bounds[ctx.npml];
-
-            // Determine source position using ABSOLUTE PHYSICAL COORDINATES
-            // Convert from absolute coordinates to coordinates relative to physical domain origin
-            real src_x_phys = P.source_x - P.domain_x_min;
-            real src_y_phys = P.source_y - P.domain_y_min;
-            real src_z_phys = P.source_z - P.domain_z_min;
-
-            // Validate source position is within domain
-            if (src_x_phys < 0 || src_x_phys > phys_x_size ||
-                src_y_phys < 0 || src_y_phys > phys_y_size ||
-                src_z_phys < 0 || src_z_phys > phys_z_size) {
-                std::cerr << "[WARNING] Source position outside physical domain!\n";
-                std::cerr << "  Source: (" << P.source_x * 1e9 << ", " << P.source_y * 1e9 << ", " << P.source_z * 1e9 << ") nm\n";
-                std::cerr << "  Domain: [" << P.domain_x_min * 1e9 << ", " << P.domain_x_max * 1e9 << "] x ["
-                          << P.domain_y_min * 1e9 << ", " << P.domain_y_max * 1e9 << "] x ["
-                          << P.domain_z_min * 1e9 << ", " << P.domain_z_max * 1e9 << "] nm\n";
-            }
-
-            // Convert physical coordinates to grid indices
-            const size_t is = ctx.grid_spacing.physical_to_index_x(src_x_phys);
-            const size_t js = ctx.grid_spacing.physical_to_index_y(src_y_phys);
-            const size_t ks = ctx.grid_spacing.physical_to_index_z(src_z_phys);
-
-            // Get actual physical coordinates at the computed indices (for verification)
-            const real actual_x = ctx.grid_spacing.cell_center_physical_x(is);
-            const real actual_y = ctx.grid_spacing.cell_center_physical_y(js);
-            const real actual_z = ctx.grid_spacing.cell_center_physical_z(ks);
-
-            // Print coordinate mapping diagnostics (Step A requirement)
             std::cout << "\n========================================\n";
-            std::cout << "SOURCE COORDINATE MAPPING DIAGNOSTICS\n";
+            std::cout << "REGISTERING SOURCES\n";
             std::cout << "========================================\n";
-            std::cout << "Target physical coordinates:\n";
-            std::cout << "  x_target = " << src_x_phys * 1e9 << " nm\n";
-            std::cout << "  y_target = " << src_y_phys * 1e9 << " nm\n";
-            std::cout << "  z_target = " << src_z_phys * 1e9 << " nm\n";
-            std::cout << "Mapped grid indices (in TOTAL domain):\n";
-            std::cout << "  i_src = " << is << " (of " << ctx.NxT << " total cells)\n";
-            std::cout << "  j_src = " << js << " (of " << ctx.NyT << " total cells)\n";
-            std::cout << "  k_src = " << ks << " (of " << ctx.NzT << " total cells)\n";
-            std::cout << "Actual physical coordinates at indices:\n";
-            std::cout << "  x_actual = " << actual_x * 1e9 << " nm\n";
-            std::cout << "  y_actual = " << actual_y * 1e9 << " nm\n";
-            std::cout << "  z_actual = " << actual_z * 1e9 << " nm\n";
-            std::cout << "Coordinate errors (actual - target):\n";
-            std::cout << "  dx_err = " << (actual_x - src_x_phys) * 1e9 << " nm\n";
-            std::cout << "  dy_err = " << (actual_y - src_y_phys) * 1e9 << " nm\n";
-            std::cout << "  dz_err = " << (actual_z - src_z_phys) * 1e9 << " nm\n";
 
-            // Reference: what the OLD NxT/2 method would have produced
-            const size_t old_is = ctx.NxT / 2;
-            const size_t old_js = ctx.NyT / 2;
-            const size_t old_ks = ctx.NzT / 2;
-            const real old_x = ctx.grid_spacing.cell_center_physical_x(old_is);
-            const real old_y = ctx.grid_spacing.cell_center_physical_y(old_js);
-            const real old_z = ctx.grid_spacing.cell_center_physical_z(old_ks);
-            std::cout << "Reference: OLD NxT/2 method would place source at:\n";
-            std::cout << "  i_old = " << old_is << " -> x = " << old_x * 1e9 << " nm\n";
-            std::cout << "  j_old = " << old_js << " -> y = " << old_y * 1e9 << " nm\n";
-            std::cout << "  k_old = " << old_ks << " -> z = " << old_z * 1e9 << " nm\n";
-            std::cout << "========================================\n\n";
+            // Helper to convert waveform int to enum
+            auto to_waveform = [](int wf) -> Sources::Waveform {
+                switch (wf) {
+                    case 0: return Sources::Waveform::Ricker;
+                    case 1: return Sources::Waveform::GaussianModulatedSine;
+                    case 2: return Sources::Waveform::RickerLikeGaussian2nd;
+                    case 3: return Sources::Waveform::ContinuousWave;
+                    default: return Sources::Waveform::Ricker;
+                }
+            };
 
-            // Select waveform from user config
-            Waveform wf;
-            switch (UserConfig::SOURCE_WAVEFORM) {
-                case 0: wf = Waveform::Ricker; break;
-                case 1: wf = Waveform::GaussianModulatedSine; break;
-                case 2: wf = Waveform::RickerLikeGaussian2nd; break;
-                default: wf = Waveform::Ricker; break;
+            auto to_polarization = [](int pol) -> Sources::Polarization {
+                switch (pol) {
+                    case 0: return Sources::Polarization::Ex;
+                    case 1: return Sources::Polarization::Ey;
+                    case 2: return Sources::Polarization::Ez;
+                    case 3: return Sources::Polarization::Hx;
+                    case 4: return Sources::Polarization::Hy;
+                    case 5: return Sources::Polarization::Hz;
+                    default: return Sources::Polarization::Ez;
+                }
+            };
+
+            // Register dipole sources from UserConfig
+            for (const auto& def : UserConfig::DIPOLE_SOURCES) {
+                if (!def.enabled) continue;
+
+                Sources::SourceConfig cfg;
+                cfg.x = def.x;
+                cfg.y = def.y;
+                cfg.z = def.z;
+                cfg.amplitude = def.amplitude;
+                cfg.frequency = def.frequency;
+                cfg.wavelength = def.wavelength;
+                cfg.tau = def.tau;
+                cfg.df_fwhm = def.df_fwhm;
+                cfg.t0_factor = def.t0_factor;
+                cfg.waveform = to_waveform(def.waveform);
+                cfg.polarization = to_polarization(def.polarization);
+
+                auto src = Sources::make_dipole_source(
+                    cfg, ctx.grid_spacing, ctx.NyT, ctx.NzT, ctx.dt,
+                    P.domain_x_min, P.domain_y_min, P.domain_z_min
+                );
+                if (src) rt.sources.push_back(std::move(src));
             }
 
-            auto src = make_point_current_z(
-                is, js, ks,
-                ctx.NyT, ctx.NzT,
-                ctx.grid_spacing,
-                P.Iz_peak,
-                P.f0, P.lambda0,
-                P.tau_src, P.df_fwhm,
-                P.dt, P.t0_factor,
-                wf
-            );
-            if (src) rt.sources.push_back(std::move(src));
+            // Register plane wave sources from UserConfig
+            for (const auto& def : UserConfig::PLANE_WAVE_SOURCES) {
+                if (!def.enabled) continue;
+
+                Sources::PlaneWaveConfig cfg;
+                cfg.injection_position = def.injection_position;
+                cfg.amplitude = def.amplitude;
+                cfg.frequency = def.frequency;
+                cfg.wavelength = def.wavelength;
+                cfg.tau = def.tau;
+                cfg.df_fwhm = def.df_fwhm;
+                cfg.t0_factor = def.t0_factor;
+                cfg.waveform = to_waveform(def.waveform);
+
+                // Direction
+                switch (def.direction) {
+                    case 0: cfg.direction = Sources::PlaneWaveDirection::PlusX; break;
+                    case 1: cfg.direction = Sources::PlaneWaveDirection::MinusX; break;
+                    case 2: cfg.direction = Sources::PlaneWaveDirection::PlusY; break;
+                    case 3: cfg.direction = Sources::PlaneWaveDirection::MinusY; break;
+                    case 4: cfg.direction = Sources::PlaneWaveDirection::PlusZ; break;
+                    case 5: cfg.direction = Sources::PlaneWaveDirection::MinusZ; break;
+                    default: cfg.direction = Sources::PlaneWaveDirection::PlusZ; break;
+                }
+                cfg.polarization = to_polarization(def.polarization);
+                cfg.x_min = def.x_min; cfg.x_max = def.x_max;
+                cfg.y_min = def.y_min; cfg.y_max = def.y_max;
+                cfg.z_min = def.z_min; cfg.z_max = def.z_max;
+
+                auto src = Sources::make_plane_wave_source(
+                    cfg, ctx.grid_spacing, ctx.NxT, ctx.NyT, ctx.NzT, ctx.npml, ctx.dt,
+                    P.domain_x_min, P.domain_y_min, P.domain_z_min
+                );
+                if (src) rt.sources.push_back(std::move(src));
+            }
+
+            std::cout << "[Sources] Registered " << rt.sources.size() << " sources\n";
+            std::cout << "========================================\n\n";
         });
     }
 
-    // Detector bundle struct
-    struct DetBundle {
-        std::unique_ptr<Detector2D>          det_Ez_center;
-        std::unique_ptr<Probe1D>             probe_Ez_center;
-        std::unique_ptr<RefrIndex2D>         det_n_center;
+    // New modular detector bundle
+    struct NewDetBundle {
+        std::vector<std::unique_ptr<Detectors::MeshDetector>> mesh_detectors;
+        std::vector<std::unique_ptr<Detectors::FieldMovie2D>> field_movies;
+        std::vector<std::unique_ptr<Detectors::PointFieldDetector>> point_probes;
+        // Legacy detectors for backward compatibility
         std::unique_ptr<BoxPoyntingDetector> boxFlux;
         std::unique_ptr<BoxEnergyDetector>   boxEM;
     };
 
-    // Detector package: Ez slice, point probe, refractive index slice, box power (time-centered), total energy inside box
+    // Detector package: registers all detectors from UserConfig
+    // Uses the new modular detector system
     inline void register_default_detectors(const SimulationParams& P) {
         g_detector_pkgs.push_back([&P](const SimContext& ctx, Runtime& rt) {
             using std::filesystem::path;
-            auto bundle = std::make_shared<DetBundle>();
+            auto bundle = std::make_shared<NewDetBundle>();
+
+            std::cout << "\n========================================\n";
+            std::cout << "REGISTERING DETECTORS\n";
+            std::cout << "========================================\n";
 
             // Output directory
             const path out_root = path("frames") / P.run_tag;
             std::error_code ec;
             std::filesystem::create_directories(out_root, ec);
 
-            // Physical domain size (for center calculation)
-            const real phys_x_size = ctx.grid_spacing.x_bounds[ctx.NxT - ctx.npml] - ctx.grid_spacing.x_bounds[ctx.npml];
-            const real phys_y_size = ctx.grid_spacing.y_bounds[ctx.NyT - ctx.npml] - ctx.grid_spacing.y_bounds[ctx.npml];
-            const real phys_z_size = ctx.grid_spacing.z_bounds[ctx.NzT - ctx.npml] - ctx.grid_spacing.z_bounds[ctx.npml];
-
-            // Convert physical z-coordinate to cell index for 2D slice
-            // Use absolute physical coordinate, converted to relative coordinate
-            real z_slice_actual = P.z_slice_z - P.domain_z_min;
-            size_t kslice = ctx.grid_spacing.physical_to_index_z(z_slice_actual);
-            // Clamp to valid range
-            kslice = std::max(size_t(1), std::min(kslice, ctx.NzT - 2));
-
-            // 2D Ez slice
-            bundle->det_Ez_center = std::make_unique<Detector2D>(
-                out_root, "Ez_center",
-                ctx.NxT, ctx.NyT, ctx.NzT, kslice,
-                P.saveEvery, P.nSteps,
-                ctx.Nx_core, ctx.Ny_core, ctx.Nz_core,
-                ctx.npml,
-                ctx.grid_spacing,  // Pass grid spacing for physical coordinate metadata
-                P.domain_size_x(), P.domain_size_y(), P.domain_size_z(),  // User-configured physical domain size
-                P.framePattern, P.writeFloat64
-            );
-
-            // Convert physical coordinates to indices for 1D probe
-            // Use absolute physical coordinates, converted to relative coordinates
-            real probe_x_actual = P.probe_x - P.domain_x_min;
-            real probe_y_actual = P.probe_y - P.domain_y_min;
-            real probe_z_actual = P.probe_z - P.domain_z_min;
-            size_t ip = ctx.grid_spacing.physical_to_index_x(probe_x_actual);
-            size_t jp = ctx.grid_spacing.physical_to_index_y(probe_y_actual);
-            size_t kp = ctx.grid_spacing.physical_to_index_z(probe_z_actual);
-            // Clamp to valid range
-            ip = std::max(size_t(1), std::min(ip, ctx.NxT - 2));
-            jp = std::max(size_t(1), std::min(jp, ctx.NyT - 2));
-            kp = std::max(size_t(1), std::min(kp, ctx.NzT - 2));
-
-            bundle->probe_Ez_center = std::make_unique<Probe1D>(
-                out_root, "Ez_probe",
-                ctx.NxT, ctx.NyT, ctx.NzT, ip, jp, kp,
-                P.saveEvery, P.nSteps, P.dt,
-                ctx.grid_spacing  // Pass grid spacing for physical coordinate metadata
-            );
-
-            // Refractive index slice
+            // Get refractive index grid for mesh detectors
             std::vector<real> n_grid;
             make_n_grid_from_scene(ctx.scene, n_grid);
-            bundle->det_n_center = std::make_unique<RefrIndex2D>(
-                out_root, "n_center",
-                ctx.NxT, ctx.NyT, ctx.NzT, kslice,
-                ctx.Nx_core, ctx.Ny_core, ctx.Nz_core,
-                ctx.npml,
-                ctx.grid_spacing,  // Pass grid spacing for physical coordinate metadata
-                P.domain_size_x(), P.domain_size_y(), P.domain_size_z(),  // User-configured physical domain size
-                "n_%04d.raw", /*float64*/true
-            );
-            bundle->det_n_center->save_from_scalar3d(n_grid);
 
-            // Box range: automatically centered
+            // Helper to convert field component int to enum
+            auto to_field_component = [](int fc) -> Detectors::FieldComponent {
+                switch (fc) {
+                    case 0: return Detectors::FieldComponent::Ex;
+                    case 1: return Detectors::FieldComponent::Ey;
+                    case 2: return Detectors::FieldComponent::Ez;
+                    case 3: return Detectors::FieldComponent::Hx;
+                    case 4: return Detectors::FieldComponent::Hy;
+                    case 5: return Detectors::FieldComponent::Hz;
+                    case 6: return Detectors::FieldComponent::E_magnitude;
+                    case 7: return Detectors::FieldComponent::H_magnitude;
+                    case 8: return Detectors::FieldComponent::Sx;
+                    case 9: return Detectors::FieldComponent::Sy;
+                    case 10: return Detectors::FieldComponent::Sz;
+                    case 11: return Detectors::FieldComponent::S_magnitude;
+                    default: return Detectors::FieldComponent::Ez;
+                }
+            };
+
+            // Register mesh detectors from UserConfig
+            for (const auto& def : UserConfig::MESH_DETECTORS) {
+                if (!def.enabled) continue;
+
+                Detectors::MeshDetectorConfig cfg;
+                cfg.name = def.name;
+                cfg.slice_position = def.slice_position;
+                cfg.slice_plane = def.slice_plane;
+                cfg.export_mesh_lines = def.export_mesh_lines;
+                cfg.export_spacing_arrays = def.export_spacing;
+
+                auto det = Detectors::make_mesh_detector(
+                    out_root, cfg,
+                    ctx.NxT, ctx.NyT, ctx.NzT,
+                    ctx.Nx_core, ctx.Ny_core, ctx.Nz_core,
+                    ctx.npml, ctx.grid_spacing,
+                    P.domain_size_x(), P.domain_size_y(), P.domain_size_z(),
+                    P.domain_x_min, P.domain_y_min, P.domain_z_min
+                );
+                if (det) {
+                    det->save_index_slice(n_grid);
+                    det->save_mesh_info();
+                    bundle->mesh_detectors.push_back(std::move(det));
+                }
+            }
+
+            // Register field movie 2D detectors from UserConfig
+            for (const auto& def : UserConfig::FIELD_MOVIE_2D_DETECTORS) {
+                if (!def.enabled) continue;
+
+                Detectors::FieldMovie2DConfig cfg;
+                cfg.name = def.name;
+                cfg.component = to_field_component(def.field_component);
+                cfg.slice_plane = def.slice_plane;
+                cfg.slice_position = def.slice_position;
+                cfg.save_every = P.saveEvery;
+                cfg.n_steps = P.nSteps;
+                cfg.write_float64 = P.writeFloat64;
+                cfg.frame_pattern = def.frame_pattern;
+
+                auto det = Detectors::make_field_movie_2d(
+                    out_root, cfg,
+                    ctx.NxT, ctx.NyT, ctx.NzT,
+                    ctx.Nx_core, ctx.Ny_core, ctx.Nz_core,
+                    ctx.npml, ctx.grid_spacing,
+                    P.domain_size_x(), P.domain_size_y(), P.domain_size_z(),
+                    P.domain_x_min, P.domain_y_min, P.domain_z_min
+                );
+                if (det) bundle->field_movies.push_back(std::move(det));
+            }
+
+            // Register point field detectors from UserConfig
+            for (const auto& def : UserConfig::POINT_FIELD_DETECTORS) {
+                if (!def.enabled) continue;
+
+                Detectors::PointFieldDetectorConfig cfg;
+                cfg.name = def.name;
+                cfg.x = def.x;
+                cfg.y = def.y;
+                cfg.z = def.z;
+                cfg.save_every = P.saveEvery;
+                cfg.n_steps = P.nSteps;
+                cfg.write_float64 = P.writeFloat64;
+                for (int c : def.components) {
+                    cfg.components.push_back(to_field_component(c));
+                }
+
+                auto det = Detectors::make_point_field_detector(
+                    out_root, cfg,
+                    ctx.NxT, ctx.NyT, ctx.NzT,
+                    ctx.npml, ctx.grid_spacing, ctx.dt,
+                    P.domain_x_min, P.domain_y_min, P.domain_z_min
+                );
+                if (det) bundle->point_probes.push_back(std::move(det));
+            }
+
+            // Legacy detectors: Box power and energy (always enabled)
             const size_t half = 49;
             const size_t ci = ctx.NxT / 2, cj = ctx.NyT / 2, ck = ctx.NzT / 2;
             size_t i0 = (ci > half ? ci - half : 1);
@@ -988,21 +1046,16 @@ namespace Config {
                 ctx.mats.bHx, ctx.mats.bHy, ctx.mats.bHz
             );
 
-            // Unified callback chaining: after_H (currently no detector, reserved for future) / after_E (write data)
-            auto prev_after_H = rt.after_H;
-            rt.after_H = [bundle, prev_after_H](size_t n,
-                const std::vector<real>& Ex,
-                const std::vector<real>& Ey,
-                const std::vector<real>& Ez,
-                const std::vector<real>& Hx,
-                const std::vector<real>& Hy,
-                const std::vector<real>& Hz) {
-                    prev_after_H(n, Ex, Ey, Ez, Hx, Hy, Hz);
-                    // Currently no H detector; reserved for future expansion
-                };
+            std::cout << "[Detectors] Registered:\n";
+            std::cout << "  - " << bundle->mesh_detectors.size() << " mesh detectors\n";
+            std::cout << "  - " << bundle->field_movies.size() << " field movie 2D detectors\n";
+            std::cout << "  - " << bundle->point_probes.size() << " point field detectors\n";
+            std::cout << "  - 2 legacy detectors (box flux/energy)\n";
+            std::cout << "========================================\n\n";
 
+            // Unified callback chaining
             auto prev_after_E = rt.after_E;
-            rt.after_E = [bundle, saveEvery = P.saveEvery, prev_after_E](
+            rt.after_E = [bundle, dt = ctx.dt, prev_after_E](
                 size_t n,
                 const std::vector<real>& Ex,
                 const std::vector<real>& Ey,
@@ -1012,12 +1065,16 @@ namespace Config {
                 const std::vector<real>& Hz) {
                     prev_after_E(n, Ex, Ey, Ez, Hx, Hy, Hz);
 
+                    // Legacy detectors
                     bundle->boxFlux->try_record(n, Ex, Ey, Ez, Hx, Hy, Hz);
                     bundle->boxEM->try_record(n, Ex, Ey, Ez, Hx, Hy, Hz);
 
-                    if (n % saveEvery == 0) {
-                        bundle->det_Ez_center->try_save(n, Ez);
-                        bundle->probe_Ez_center->try_record(n, Ez);
+                    // New modular detectors
+                    for (auto& det : bundle->field_movies) {
+                        det->record_after_E(n, dt, Ex, Ey, Ez, Hx, Hy, Hz);
+                    }
+                    for (auto& det : bundle->point_probes) {
+                        det->record_after_E(n, dt, Ex, Ey, Ez, Hx, Hy, Hz);
                     }
                 };
         });
