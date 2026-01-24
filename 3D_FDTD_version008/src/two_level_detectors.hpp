@@ -190,18 +190,20 @@ struct PopulationSlice2D {
 };
 
 // ======================= Polarization diagnostics =======================
+// ENERGY FORMULA FIX: Uses field-medium interaction energy 0.5 * Pz * Ez * dV
+// This is consistent with compute_polarization_energy() in two_level_system.hpp
 struct PolarizationDiagnostics {
     fs::path det_dir;
     fs::path csv_path;
     std::ofstream f_csv;
-    
+
     size_t NxT, NyT, NzT;
     size_t saveEvery;
     real dt;
-    
+
     // Monitor point (center of gain region)
     size_t i_mon, j_mon, k_mon;
-    
+
     PolarizationDiagnostics(
         const fs::path& out_root,
         std::string det_name,
@@ -215,26 +217,31 @@ struct PolarizationDiagnostics {
     {
         std::error_code ec;
         fs::create_directories(det_dir, ec);
-        
+
         csv_path = det_dir / "polarization_time.csv";
         f_csv.open(csv_path, std::ios::out);
-        
+
         if (f_csv) {
+            // total_P_energy is now: 0.5 * ∫ Pz*Ez dV (interaction energy proxy)
             f_csv << "t, Pz_center, dPz_dt_center, total_P_energy\n";
         }
-        
+
         std::cout << "[PolarizationDiag] " << det_dir << "\n";
     }
-    
-    void record(size_t n, const TwoLevelState& state, const GridSpacing& grid) {
+
+    // FIX: Added Ez parameter for correct interaction energy calculation
+    void record(size_t n, const TwoLevelState& state,
+                const std::vector<real>& Ez, const GridSpacing& grid) {
         if (n % saveEvery != 0) return;
         if (!f_csv) return;
-        
+
         size_t id_mon = idx3(i_mon, j_mon, k_mon, NyT, NzT);
         real Pz_center = state.Pz[id_mon];
         real dPz_dt_center = state.dPz_dt[id_mon];
-        
-        // Calculate total polarization energy
+
+        // Calculate total polarization-field interaction energy: 0.5 * ∫ Pz*Ez dV
+        // This is consistent with compute_polarization_energy() in two_level_system.hpp
+        // Units: [C/m²] * [V/m] * [m³] = [J] (energy)
         double P_energy = 0.0;
         for (size_t i = 0; i < NxT; ++i) {
             for (size_t j = 0; j < NyT; ++j) {
@@ -243,17 +250,17 @@ struct PolarizationDiagnostics {
                     if (state.Ndip[id] <= 0) continue;  // Skip cells with no gain medium
 
                     real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
-                    P_energy += 0.5 * state.Pz[id] * state.Pz[id] * dV;
+                    P_energy += 0.5 * state.Pz[id] * Ez[id] * dV;
                 }
             }
         }
-        
+
         real t = n * dt;
         f_csv << std::setprecision(18) << t << ","
               << Pz_center << "," << dPz_dt_center << ","
               << P_energy << "\n";
     }
-    
+
     ~PolarizationDiagnostics() {
         if (f_csv) f_csv.close();
     }
