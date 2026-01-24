@@ -21,14 +21,15 @@
 #include "user_config.hpp"
 #include "boundary.hpp"
 #include "structure_material.hpp"
-#include "source.hpp"
 #include "detectors.hpp"
 #include "auto_mesh_generator.hpp"
 
-// New modular sources and detectors
+// Modular sources
 #include "sources/isource.hpp"
 #include "sources/dipole_source.hpp"
 #include "sources/plane_wave_source.hpp"
+
+// Modular detectors
 #include "detectors/idetector.hpp"
 #include "detectors/mesh_detector.hpp"
 #include "detectors/field_movie_2d.hpp"

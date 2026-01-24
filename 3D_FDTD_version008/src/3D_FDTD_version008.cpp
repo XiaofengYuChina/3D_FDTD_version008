@@ -6,11 +6,10 @@
 // Configuration: Modify user_config.hpp to change simulation parameters.
 
 #include "user_config.hpp"          // User-configurable parameters (MODIFY THIS FILE)
-#include "params.hpp"               // Simulation parameter management
+#include "params.hpp"               // Simulation parameter management (includes sources/detectors)
 #include "fdtd_stepper.hpp"         // FDTD update equations
 #include "boundary.hpp"             // Boundary conditions (PML)
-#include "source.hpp"               // Electromagnetic sources
-#include "detectors.hpp"            // Field detectors
+#include "detectors.hpp"            // Field detectors (legacy)
 #include "structure_material.hpp"   // Materials and geometry
 #include "global_function.hpp"      // Utility functions and constants
 #include "omp_config.hpp"           // OpenMP configuration
