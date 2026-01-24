@@ -359,21 +359,23 @@ inline void update_polarization(
 
 // Update population densities using CORRECTED two-level rate equations:
 //
-// FIX #3: Spontaneous decay is now LINEAR in Nu (was incorrectly Nu² due to sat_term)
-// FIX #4: Stimulated term now uses energy-conserving form: stim = E_avg·ΔP/(ℏωa)
+// Rate equations (VOLUME DENSITY FORMULATION, all quantities in m^-3):
+//   stim_rate = E_avg · (dP/dt) / (ℏωa)   [m^-3 s^-1]
+//   dNu/dt = -Nu/τ + stim_rate
+//   dNg/dt = +Nu/τ - stim_rate
 //
-// Correct two-level equations:
-//   dNu/dt = -Nu/τ - stim     (spontaneous decay + stimulated emission/absorption)
-//   dNg/dt = +Nu/τ + stim     (gains from spontaneous decay + stimulated)
+// where:
+//   E_avg = 0.5 * (Ez_new + Ez_old)   [V/m, time-centered field]
+//   dP/dt = (Pz_new - Pz_old) / dt    [C/(m²·s)]
 //
-// where stim = (E_avg · ΔP) / (ℏ · ωa)
-//   - E_avg = 0.5 * (Ez_new + Ez_old)  [time-centered field]
-//   - ΔP = Pz_new - Pz_old             [polarization change in this step]
+// Sign convention:
+//   stim_rate > 0: field does positive work → ABSORPTION → Nu increases
+//   stim_rate < 0: field does negative work → STIMULATED EMISSION → Nu decreases
 //
-// This form ensures:
-//   1. Energy conservation: field energy change = -ℏωa × population change
-//   2. Nu + Ng = Ntotal is conserved (no pumping/external losses)
-//   3. Correct sign: positive inversion (Nu > Ng) causes amplification
+// Conservation properties:
+//   1. Nu + Ng = Ntotal is conserved (no external pumping/losses)
+//   2. Energy conservation: field energy change = -ℏωa × population change
+//   3. Positive inversion (Nu > Ng) causes amplification
 
 inline void update_populations(
     size_t NxT, size_t NyT, size_t NzT,
@@ -624,14 +626,18 @@ inline real compute_avg_inversion_density(const TwoLevelState& state, const Grid
     return (total_volume > 0) ? total_inversion / total_volume : 0.0;
 }
 
-// Calculate total stored energy in polarization
-// CRITICAL FIX (Issue E): Energy formula was WRONG
-// Previous code: energy_density = 0.5 * Pz * Pz (comment said "0.5 * Pz * Ez")
-// Correct: energy_density = 0.5 * Pz * Ez (interaction energy between field and medium)
-// Note: This is the dipole interaction energy W = -P·E, with factor 0.5 for energy storage
+// Calculate dipole-field interaction energy: U_int = -∫ P·E dV
+// For z-polarized case: U_int = -∫ Pz·Ez dV
+// We use 0.5 factor for time-averaged energy: u_int = -0.5 * Pz * Ez
+//
+// Physical interpretation:
+//   u_int < 0 when P and E are aligned → stable configuration
+//   u_int > 0 when P and E are anti-aligned → unstable
+//
+// CRITICAL FIX: The sign must be NEGATIVE (dipole interaction u_int = -P·E)
 inline real compute_polarization_energy(
     const TwoLevelState& state,
-    const std::vector<real>& Ez,  // Added Ez parameter for correct calculation
+    const std::vector<real>& Ez,
     const GridSpacing& grid
 ) {
     real total_energy = 0.0;
@@ -647,8 +653,9 @@ inline real compute_polarization_energy(
 
                 real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
 
-                // Correct energy density: 0.5 * Pz * Ez (field-medium interaction)
-                real energy_density = 0.5 * state.Pz[id] * Ez[id];
+                // Dipole interaction energy density: u_int = -P·E
+                // With time-averaging factor: -0.5 * Pz * Ez
+                real energy_density = -0.5 * state.Pz[id] * Ez[id];
                 total_energy += energy_density * dV;
             }
         }
