@@ -1,0 +1,376 @@
+// user_config.hpp — All user-configurable simulation parameters
+//
+// This is the ONLY file you need to modify to configure your simulation.
+// All parameters are centralized here for easy access.
+//
+// Usage: Modify the values below, then rebuild and run the simulation.
+
+#pragma once
+
+#include <vector>
+#include <string>
+#include <limits>  // for std::numeric_limits (NaN for default physical coords)
+
+namespace UserConfig {
+
+// ============================================================================
+//                         1. DOMAIN AND GRID SETTINGS
+// ============================================================================
+
+// Physical domain boundaries (meters)
+// This defines the simulation region using absolute physical coordinates.
+// All positions (sources, detectors, structures) use the same coordinate system.
+// The domain excludes PML boundaries which are added automatically.
+constexpr double DOMAIN_X_MIN = 0.0;        // Physical domain x minimum (m)
+constexpr double DOMAIN_X_MAX = 4000e-9;    // Physical domain x maximum (m) = 2 um
+constexpr double DOMAIN_Y_MIN = 0.0;        // Physical domain y minimum (m)
+constexpr double DOMAIN_Y_MAX = 4000e-9;    // Physical domain y maximum (m) = 2 um
+constexpr double DOMAIN_Z_MIN = 0.0;        // Physical domain z minimum (m)
+constexpr double DOMAIN_Z_MAX = 1000e-9;    // Physical domain z maximum (m) = 1 um
+
+// Derived domain sizes (for backward compatibility in some calculations)
+constexpr double DOMAIN_SIZE_X = DOMAIN_X_MAX - DOMAIN_X_MIN;
+constexpr double DOMAIN_SIZE_Y = DOMAIN_Y_MAX - DOMAIN_Y_MIN;
+constexpr double DOMAIN_SIZE_Z = DOMAIN_Z_MAX - DOMAIN_Z_MIN;
+
+// Central wavelength (meters) - used for mesh generation and source
+constexpr double LAMBDA0 = 1500e-9;          // 300 nm
+
+// Mesh mode selection:
+// 0 = UNIFORM           - constant grid spacing
+// 1 = AUTO_NONUNIFORM   - ppw-based auto mesh with interface snapping (recommended)
+constexpr int MESH_MODE = 1;
+
+// --- Uniform mesh settings (for MESH_MODE = 0) ---
+constexpr double DX_UNIFORM = 10e-9;        // 10 nm uniform spacing
+constexpr double DY_UNIFORM = 10e-9;
+constexpr double DZ_UNIFORM = 10e-9;
+
+// --- Auto mesh settings (for MESH_MODE = 1) ---
+// Mesh accuracy level determines points-per-wavelength (PPW):
+//   acc=1 -> 6 ppw  (fast, less accurate)
+//   acc=2 -> 10 ppw (balanced)
+//   acc=3 -> 14 ppw (high accuracy)
+//   acc>=3: 14 + (acc-3)*4 ppw (e.g., acc=8 -> 34 ppw)
+constexpr int    AUTO_MESH_ACCURACY = 2;               // Mesh accuracy level (1-8)
+constexpr double AUTO_MESH_PPW_OVERRIDE = 20.0;        // Direct PPW override (if > 0, overrides AUTO_MESH_ACCURACY)
+constexpr double AUTO_MESH_DX_MIN = 2e-9;              // Minimum spacing (m)
+constexpr double AUTO_MESH_DX_MAX = 100e-9;            // Maximum spacing (m)
+constexpr double AUTO_MESH_MAX_GRADING_RATIO = 1.41421356237;  // sqrt(2) by default
+
+// Grid cell counts (used for UNIFORM mode only)
+// For AUTO_NONUNIFORM, these are computed from domain size
+constexpr size_t NX = 100;
+constexpr size_t NY = 100;
+constexpr size_t NZ = 100;
+
+
+// ============================================================================
+//                         2. TIME STEPPING SETTINGS
+// ============================================================================
+
+// CFL safety factor (must be < 1 for stability)
+constexpr double CFL_FACTOR = 0.99;
+
+// Total number of time steps
+constexpr size_t N_STEPS = 10000;
+
+// Save data every N steps
+constexpr size_t SAVE_EVERY = 10;
+
+
+// ============================================================================
+//                         3. BOUNDARY CONDITIONS (CPML)
+// ============================================================================
+
+// Boundary type: 0 = PEC (perfect electric conductor), 1 = CPML (absorbing)
+constexpr int BOUNDARY_TYPE = 1;            // 1 = CPML (recommended)
+
+// CPML parameters
+constexpr int    CPML_NPML = 8;            // PML thickness in cells
+constexpr double CPML_M = 3.0;              // Polynomial grading order
+constexpr double CPML_RERR = 1e-8;          // Target reflection coefficient
+constexpr double CPML_ALPHA0 = 0.2;         // Alpha parameter
+constexpr double CPML_KAPPA_MAX = 10.0;     // Maximum kappa
+constexpr bool   CPML_ALPHA_LINEAR = true;  // Linear alpha distribution
+
+
+// ============================================================================
+//                         4. SOURCE CONFIGURATION
+// ============================================================================
+
+// Source type: 0 = Ricker, 1 = GaussianModulatedSine, 2 = RickerLikeGaussian2nd
+constexpr int SOURCE_WAVEFORM = 0;
+
+// Peak current (Amperes)
+constexpr double SOURCE_IZ_PEAK = 1e-5;
+
+// Source frequency (Hz) - if 0, uses LAMBDA0 to calculate
+constexpr double SOURCE_F0 = 0.0;
+
+// Pulse width parameters
+constexpr double SOURCE_TAU = 5e-15;        // Time constant (s)
+constexpr double SOURCE_DF_FWHM = 2.4e13;   // Bandwidth FWHM (Hz)
+
+// Time delay factor (t0 = t0_factor * tau_eff)
+// If <= 0, uses default t0 = 3/f0
+// NOTE: Should be >= 3.0 for Ricker wavelet to start from near-zero
+// With t0_factor=0.4, the pulse starts at 25-50% amplitude at t=0
+constexpr double SOURCE_T0_FACTOR = 3.0;
+
+// Source position: Use ABSOLUTE PHYSICAL COORDINATES (in meters)
+// These coordinates must be within [DOMAIN_X_MIN, DOMAIN_X_MAX] etc.
+// Example: For a 2um x 2um x 1um domain, center is at (1000nm, 1000nm, 500nm)
+constexpr double SOURCE_X = 1100e-9;    // Source x position (m) - domain center
+constexpr double SOURCE_Y = 2000e-9;    // Source y position (m)
+constexpr double SOURCE_Z = 500e-9;     // Source z position (m)
+
+
+// ============================================================================
+//                         5. DETECTOR CONFIGURATION
+// ============================================================================
+
+// Output directory tag (results saved to frames/<RUN_TAG>/)
+inline const std::string RUN_TAG = "3D_FDTD_v008_output";
+
+// --- Detector position specification ---
+// Use ABSOLUTE PHYSICAL COORDINATES (in meters)
+// Coordinates must be within the physical domain boundaries defined above.
+
+// 2D slice detector: z-slice position in physical coordinates (meters)
+constexpr double Z_SLICE_Z = 500e-9;    // Z position of the XY slice (m)
+
+// Frame output pattern and precision
+inline const std::string FRAME_PATTERN = "ez_%04d.raw";
+constexpr bool WRITE_FLOAT64 = true;        // true = double, false = float
+
+// 1D probe position in physical coordinates (meters)
+// Must specify explicit positions within the domain
+constexpr double PROBE_X = 2000e-9;     // Probe x position (m) - domain center
+constexpr double PROBE_Y = 2000e-9;     // Probe y position (m)
+constexpr double PROBE_Z = 500e-9;      // Probe z position (m)
+
+
+// ============================================================================
+//                         6. TWO-LEVEL SYSTEM (GAIN MEDIUM) CONFIGURATION
+// ============================================================================
+
+// Enable two-level gain medium
+constexpr bool TLS_ENABLED = true;
+
+// Transition wavelength (meters)
+constexpr double TLS_LAMBDA0 = 1500e-9;
+
+// Polarization damping rate (1/s)
+constexpr double TLS_GAMMA = 7e12;
+
+// Upper level lifetime (seconds)
+// WARNING: Very small values (< 1e-12) may cause numerical instability
+constexpr double TLS_TAU = 1e-12;
+
+// Total dipole DENSITY (atoms/m³) - will be multiplied by cell volume internally
+// Typical values: 1e22 - 1e24 atoms/m³ for solid gain media
+// Example: 5e23 atoms/m³ with 10nm³ cells → ~0.5 atoms per cell
+constexpr double TLS_N0_TOTAL = 1e25;
+
+// Enable population clamping (optional, for debugging)
+constexpr bool TLS_ENABLE_CLAMP = false;
+
+// --- Gain region configuration ---
+// Gain region defined using ABSOLUTE PHYSICAL COORDINATES (meters)
+// Must be within the domain boundaries defined above
+constexpr double GAIN_X_MIN = 1000e-9;   // Gain region x minimum (m) - matches box
+constexpr double GAIN_X_MAX = 2000e-9;  // Gain region x maximum (m)
+constexpr double GAIN_Y_MIN = 1000e-9;   // Gain region y minimum (m)
+constexpr double GAIN_Y_MAX = 2000e-9;  // Gain region y maximum (m)
+constexpr double GAIN_Z_MIN = 450e-9;   // Gain region z minimum (m)
+constexpr double GAIN_Z_MAX = 550e-9;   // Gain region z maximum (m)
+
+// Initial population inversion fraction (0 to 1)
+// 0.5 = thermal equilibrium, > 0.5 = population inversion (gain)
+constexpr double GAIN_INVERSION_FRACTION = 1.00;
+
+
+// ============================================================================
+//                         7. STABILITY MONITOR THRESHOLDS
+// ============================================================================
+
+// Stability monitor interval (steps)
+// How often to check stability and output physics monitoring to console
+constexpr size_t STABILITY_MONITOR_INTERVAL = 10;
+
+// Maximum E-field magnitude before declaring instability (V/m)
+constexpr double STABILITY_MAX_E = 1e10;
+
+// Maximum polarization magnitude before declaring instability (C/m^2)
+constexpr double STABILITY_MAX_P = 1e5;
+
+// Maximum conservation error (fractional)
+constexpr double STABILITY_CONSERVATION_ERR = 0.01;  // 1%
+
+// Maximum allowed growth rate per 100 steps
+constexpr double STABILITY_GROWTH_RATE = 10.0;
+
+
+// ============================================================================
+//                         8. STRUCTURE DEFINITIONS
+// ============================================================================
+//
+// Define your simulation structures here.
+// Each structure is specified by its type, position, dimensions, and material.
+//
+// Structure types:
+//   "box"      - rectangular box
+//   "sphere"   - sphere
+//   "cylinder" - cylinder along z-axis
+//
+// Material is specified by refractive index n (assuming non-magnetic, mu_r = 1)
+
+struct StructureDef {
+    std::string type;           // "box", "sphere", or "cylinder"
+    double n;                   // Refractive index
+
+    // For box: x0, x1, y0, y1, z0, z1 (bounds in meters, relative to core origin)
+    // For sphere: cx, cy, cz, radius (center and radius in meters)
+    // For cylinder: cx, cy, radius, z0, z1 (center, radius, and z-bounds)
+    double params[6];
+};
+
+// Define structures here
+// Coordinates are relative to the physical domain origin (after PML)
+// Use negative values for "relative to center" positioning
+//
+// Example configurations:
+
+// Configuration 1: Center cube + cylinder (default demo)
+inline const std::vector<StructureDef> STRUCTURES = {
+    // Structure 1: Box (200nm x 200nm x 200nm, n=4)
+    // params = {x0, x1, y0, y1, z0, z1}
+    // {"box", 4.0, {900e-9, 1100e-9, 900e-9, 1100e-9, 400e-9, 600e-9}},
+
+    // Structure 2: Cylinder (r=100nm, h=200nm, n=2)
+    // params = {cx, cy, radius, z0, z1, 0}
+    // {"cylinder", 2.0, {700e-9, 700e-9, 100e-9, 400e-9, 600e-9, 0}},
+    {"cylinder", 3.3, {2000e-9, 2000e-9, 1000e-9, 400e-9, 600e-9, 0}},
+
+    // Structure 3: Additional box (200nm x 200nm x 200nm, n=3)
+    // {"box", 3.0, {1200e-9, 1400e-9, 1200e-9, 1400e-9, 400e-9, 600e-9}},
+};
+
+// Background material refractive index (default: air, n=1)
+constexpr double BACKGROUND_N = 1.0;
+
+
+// ============================================================================
+//                         10. MESH OVERRIDE REGIONS (HIGHEST PRIORITY)
+// ============================================================================
+//
+// Define custom mesh refinement regions here.
+// These have the HIGHEST priority and will override auto mesh settings.
+// Useful for:
+// - Accurately resolving curved boundaries (like cylinders, spheres)
+// - Fine-tuning mesh in specific regions of interest
+// - Creating uniform mesh in certain areas
+//
+// Set MESH_OVERRIDE_ENABLED to true to activate this feature.
+
+constexpr bool MESH_OVERRIDE_ENABLED = true;
+
+// Mesh Override Region definition
+struct MeshOverrideRegion {
+    bool enabled;               // Whether this region is active
+    double x0, x1;              // X bounds (meters, relative to physical domain origin)
+    double y0, y1;              // Y bounds (meters, relative to physical domain origin)
+    double z0, z1;              // Z bounds (meters, relative to physical domain origin)
+    double dx;                  // Target mesh size in X direction (meters)
+    double dy;                  // Target mesh size in Y direction (meters)
+    double dz;                  // Target mesh size in Z direction (meters)
+};
+
+// Define mesh override regions here
+// Coordinates are relative to the physical domain origin (after PML)
+//
+// Example: Refine mesh around the cylinder boundary for accurate curved surface
+inline const std::vector<MeshOverrideRegion> MESH_OVERRIDE_REGIONS = {
+    // Region 1: Fine mesh around cylinder (r=100nm at x=700nm, y=700nm)
+    // Covers the cylinder plus a margin, with 5nm uniform mesh
+    // {true,   600e-9, 800e-9,   600e-9, 800e-9,   400e-9, 600e-9,   5e-9, 5e-9, 5e-9},
+    // Region 2: Fine mesh around first box (n=4)
+    {true,   1000e-9, 3000e-9,   1000e-9, 3000e-9,   400e-9, 600e-9,   20e-9, 20e-9, 20e-9},
+    // Region 3: Fine mesh around third box (n=3)
+    // {true,   1200e-9, 1400e-9,   1200e-9, 1400e-9,   400e-9, 600e-9,   5e-9, 5e-9, 5e-9},
+};
+
+// NOTE: Override regions can overlap. When they do, the SMALLEST dx/dy/dz wins.
+// This allows you to define a moderately fine region, then an even finer sub-region.
+
+
+// ============================================================================
+//                         9. PHYSICAL CONSTANTS
+// ============================================================================
+// These are fundamental constants - typically you don't need to modify them
+
+namespace PhysicalConstants {
+    constexpr double PI   = 3.14159265358979323846;
+    constexpr double C0   = 299792458.0;              // Speed of light (m/s)
+    constexpr double EPS0 = 8.854187817e-12;          // Vacuum permittivity (F/m)
+    constexpr double MU0  = 1.2566370614359173e-6;    // Vacuum permeability (H/m)
+    constexpr double HBAR = 1.054571817e-34;          // Reduced Planck constant (J·s)
+}
+
+
+// ============================================================================
+//                     11. PARALLEL DOMAIN DECOMPOSITION V2
+// ============================================================================
+//
+// TRUE domain decomposition for improved performance on large grids.
+// The simulation domain is split into multiple subdomains along a chosen axis.
+//
+// V2 Architecture (efficient):
+// ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+// │ PML │ 物理 │Halo│  │Halo│ 物理 │Halo│  │Halo│ 物理 │ PML │
+// │     │ 区域 │    │  │    │ 区域 │    │  │    │ 区域 │     │
+// │     域0         │  │       域1       │  │         域2     │
+// └──────────────────┘  └──────────────────┘  └──────────────────┘
+//                   ↕ O(N²) halo exchange ↕
+//
+// Key features of V2:
+// - Each subdomain has its OWN independent PML data (psi arrays)
+// - Only halo regions exchanged per step: O(N²) instead of O(N³)
+// - NO scatter/gather operations during computation
+// - Subdomains compute completely independently
+//
+// When to use parallel mode:
+// - Large grids where domain decomposition improves cache efficiency
+// - Preparing for future MPI distributed computing
+// - Testing domain decomposition correctness
+//
+// When to use serial mode:
+// - Small to medium grids (OpenMP loop parallelization is sufficient)
+// - When TLS (two-level system) is heavily used (currently requires global ops)
+//
+// Requirements:
+// - OpenMP must be enabled during compilation (-fopenmp flag)
+// - Grid must be large enough: at least (4 + 2*halo_width) cells per domain
+
+// Enable parallel domain decomposition V2
+constexpr bool PARALLEL_ENABLED = false;
+
+// Number of parallel domains
+// Recommended: 2-8 domains, ideally matching CPU core count
+constexpr int PARALLEL_NUM_DOMAINS = 8;
+
+// Decomposition axis:
+// 0 = X axis, 1 = Y axis, 2 = Z axis
+// Choose the axis with the largest number of cells for best load balancing
+constexpr int PARALLEL_DECOMP_AXIS = 0;
+
+// Halo (ghost cell) width for inter-domain communication
+// 1 is sufficient for standard FDTD (nearest-neighbor stencil)
+constexpr int PARALLEL_HALO_WIDTH = 1;
+
+
+} // namespace UserConfig
+
+
+

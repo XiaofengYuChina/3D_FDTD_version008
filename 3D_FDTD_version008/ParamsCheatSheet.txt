@@ -1,0 +1,219 @@
+FDTD Simulation Parameter Cheat Sheet
+Quick Start: Where to Change Things
+
+
+All parameters are in params.hpp at the very bottom:
+cpp// Location: params.hpp, line ~500+
+
+inline SimulationParams sim = [] {
+    SimulationParams p;
+    
+    // YOUR SETTINGS HERE
+    
+    return p;
+}();
+
+
+
+
+Grid & Mesh Settings
+
+cpp// ===== GRID SIZE =====
+p.Nx = 100;  // Number of cells in x (default: 100)
+p.Ny = 100;  // Number of cells in y
+p.Nz = 100;  // Number of cells in z
+
+
+// ===== UNIFORM MESH (Simple) =====
+
+p.use_nonuniform_mesh = false;  // Use uniform spacing
+p.dx_uniform = 10e-9;           // Cell size: 10nm (in meters)
+p.dy_uniform = 10e-9;
+p.dz_uniform = 10e-9;
+
+
+// ===== NON-UNIFORM MESH (Advanced) =====
+
+p.use_nonuniform_mesh = true;   // Enable variable spacing
+p.dx_fine = 5e-9;               // Fine spacing (5nm near center)
+p.dx_coarse = 20e-9;            // Coarse spacing (20nm at edges)
+p.n_fine_cells = 40;            // Number of fine cells in center
+
+
+When to use non-uniform:
+Fine details near structures (particles, waveguides)
+Want to save memory/time on large domains
+Need high resolution only in specific regions
+
+
+
+
+Time & Simulation Duration
+
+// ===== TIME STEPPING =====
+
+p.nSteps = 1000;     // Total number of time steps
+p.saveEvery = 10;    // Save output every N steps (affects file size)
+
+
+// ===== CFL STABILITY =====
+p.S = 0.9;           // Safety factor (0 < S < 1, default 0.9)
+                     // Smaller = more stable, larger = faster but risky
+                     // dt is auto-calculated: dt = S / (c0 * sqrt(...))
+
+
+
+
+Quick estimates:
+
+dt ≈ 0.017 fs for 10nm uniform mesh
+dt ≈ 0.009 fs for 5nm finest mesh
+Physical time = nSteps * dt
+
+
+
+
+Boundary Conditions (PML)
+
+// ===== PML SETTINGS =====
+
+p.bp.cpml.npml = 16;         // PML thickness (cells, default: 16)
+p.bp.cpml.m = 3.0;           // Polynomial grading order
+p.bp.cpml.Rerr = 1e-8;       // Target reflection error
+p.bp.cpml.alpha0 = 0.2;      // Alpha parameter (0.05-0.2)
+p.bp.cpml.kappa_max = 10.0;  // Kappa max (6-12)
+
+
+// To use PEC (perfect conductor) instead:
+
+p.bp.type = BcType::PEC;     // Metallic walls (not recommended)
+Thicker PML = better absorption but more memory
+
+
+
+
+Source Configuration
+
+// ===== SOURCE POSITION =====
+
+p.source_i = -1;  // -1 = auto-center, or specify cell index
+p.source_j = -1;
+p.source_k = -1;
+
+
+// ===== SOURCE WAVEFORM =====
+
+p.Iz_peak = 1e-5;        // Peak current (A)
+
+
+// Method 1: Specify wavelength
+
+p.lambda0 = 500e-9;      // 500nm = green light (in meters)
+p.f0 = 0.0;              // Leave at 0, auto-calculated from lambda0
+
+
+// Method 2: Specify frequency directly
+
+// p.f0 = 3e14;          // 300 THz (uncomment to use)
+// p.lambda0 = 0.0;
+
+// ===== PULSE WIDTH =====
+
+p.tau_src = 5e-15;       // Pulse width: 5 femtoseconds
+// OR use bandwidth:
+// p.df_fwhm = 2.4e13;   // Bandwidth (Hz)
+
+p.t0_factor = 0.4;       // Delay: t0 = 0.4 * tau (pulse starts smoothly)
+
+
+
+
+Common wavelengths:
+
+UV: 300nm (300e-9)
+Blue: 450nm
+Green: 550nm
+Red: 650nm
+Near-IR: 1000nm (1e-6)
+
+
+
+Detectors & Output
+
+cpp// ===== OUTPUT DIRECTORY =====
+p.run_tag = "3D_FDTD_v008_output";  // Folder name in frames/
+
+
+// ===== 2D SLICE DETECTOR =====
+p.kslice = -1;           // -1 = center, or specify z-slice index
+p.framePattern = "ez_%04d.raw";
+p.writeFloat64 = true;   // true = double precision, false = float
+
+
+// ===== PROBE POINT =====
+p.probe_i = 50;          // Monitor Ez at specific point
+p.probe_j = 50;
+p.probe_k = 50;          // -1 = auto-center
+
+
+
+
+Complete Examples
+
+Example 1: Small Test (Fast)
+cppinline SimulationParams sim = [] {
+    SimulationParams p;
+    p.Nx = 50; p.Ny = 50; p.Nz = 50;  // Small grid
+    p.nSteps = 500;                    // Short run
+    p.saveEvery = 20;                  // Less output
+    p.lambda0 = 500e-9;                // Green light
+    return p;
+}();
+
+
+Example 2: High-Resolution Uniform
+cppinline SimulationParams sim = [] {
+    SimulationParams p;
+    p.Nx = 200; p.Ny = 200; p.Nz = 200;
+    p.dx_uniform = 5e-9;  // Fine 5nm everywhere
+    p.nSteps = 2000;
+    p.lambda0 = 800e-9;   // Near-IR
+    return p;
+}();
+
+
+Example 3: Non-Uniform for Efficiency
+cppinline SimulationParams sim = [] {
+    SimulationParams p;
+    p.Nx = 150; p.Ny = 150; p.Nz = 150;
+    
+    p.use_nonuniform_mesh = true;
+    p.dx_fine = 3e-9;      // 3nm near center
+    p.dx_coarse = 25e-9;   // 25nm at edges
+    p.n_fine_cells = 60;   // 60 fine cells
+    
+    p.nSteps = 3000;
+    p.lambda0 = 1550e-9;   // Telecom wavelength
+    p.tau_src = 10e-15;    // 10fs pulse
+    return p;
+}();
+
+
+Example 4: Broadband Pulse
+cppinline SimulationParams sim = [] {
+    SimulationParams p;
+    p.lambda0 = 600e-9;     // Center wavelength
+    p.tau_src = 2e-15;      // 2fs = very short = very broadband
+    p.nSteps = 5000;        // Need more steps for short pulse
+    return p;
+}();
+
+
+
+Notes
+
+p.dx_uniform - need ~10 cells per wavelength
+p.S - must be < 1
+p.nSteps = 10 TOO SHORT - pulse doesn't propagate ~1000
+dx ≤ lambda / 10
+500nm light: dx ≤ 50nm
