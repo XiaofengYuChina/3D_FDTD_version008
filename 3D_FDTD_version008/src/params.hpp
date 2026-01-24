@@ -21,7 +21,6 @@
 #include "user_config.hpp"
 #include "boundary.hpp"
 #include "structure_material.hpp"
-#include "detectors.hpp"
 #include "auto_mesh_generator.hpp"
 
 // Modular sources
@@ -894,22 +893,19 @@ namespace Config {
         });
     }
 
-    // New modular detector bundle
-    struct NewDetBundle {
+    // Modular detector bundle
+    struct DetectorBundle {
         std::vector<std::unique_ptr<Detectors::MeshDetector>> mesh_detectors;
         std::vector<std::unique_ptr<Detectors::FieldMovie2D>> field_movies;
         std::vector<std::unique_ptr<Detectors::PointFieldDetector>> point_probes;
-        // Legacy detectors for backward compatibility
-        std::unique_ptr<BoxPoyntingDetector> boxFlux;
-        std::unique_ptr<BoxEnergyDetector>   boxEM;
     };
 
     // Detector package: registers all detectors from UserConfig
-    // Uses the new modular detector system
+    // Uses the modular detector system
     inline void register_default_detectors(const SimulationParams& P) {
         g_detector_pkgs.push_back([&P](const SimContext& ctx, Runtime& rt) {
             using std::filesystem::path;
-            auto bundle = std::make_shared<NewDetBundle>();
+            auto bundle = std::make_shared<DetectorBundle>();
 
             std::cout << "\n========================================\n";
             std::cout << "REGISTERING DETECTORS\n";
@@ -1019,39 +1015,10 @@ namespace Config {
                 if (det) bundle->point_probes.push_back(std::move(det));
             }
 
-            // Legacy detectors: Box power and energy (always enabled)
-            const size_t half = 49;
-            const size_t ci = ctx.NxT / 2, cj = ctx.NyT / 2, ck = ctx.NzT / 2;
-            size_t i0 = (ci > half ? ci - half : 1);
-            size_t j0 = (cj > half ? cj - half : 1);
-            size_t k0 = (ck > half ? ck - half : 1);
-            size_t i1 = std::min(ctx.NxT - 2, ci + half - 1);
-            size_t j1 = std::min(ctx.NyT - 2, cj + half - 1);
-            size_t k1 = std::min(ctx.NzT - 2, ck + half - 1);
-
-            bundle->boxFlux = std::make_unique<BoxPoyntingDetector>(
-                out_root, "box_flux80",
-                ctx.NxT, ctx.NyT, ctx.NzT,
-                i0, i1, j0, j1, k0, k1,
-                P.saveEvery, P.nSteps,
-                ctx.grid_spacing, ctx.dt
-            );
-
-            bundle->boxEM = std::make_unique<BoxEnergyDetector>(
-                out_root,
-                ctx.NxT, ctx.NyT, ctx.NzT,
-                i0, i1, j0, j1, k0, k1,
-                P.saveEvery, P.nSteps,
-                ctx.grid_spacing, ctx.dt,
-                ctx.mats.bEx, ctx.mats.bEy, ctx.mats.bEz,
-                ctx.mats.bHx, ctx.mats.bHy, ctx.mats.bHz
-            );
-
             std::cout << "[Detectors] Registered:\n";
             std::cout << "  - " << bundle->mesh_detectors.size() << " mesh detectors\n";
             std::cout << "  - " << bundle->field_movies.size() << " field movie 2D detectors\n";
             std::cout << "  - " << bundle->point_probes.size() << " point field detectors\n";
-            std::cout << "  - 2 legacy detectors (box flux/energy)\n";
             std::cout << "========================================\n\n";
 
             // Unified callback chaining
@@ -1066,11 +1033,6 @@ namespace Config {
                 const std::vector<real>& Hz) {
                     prev_after_E(n, Ex, Ey, Ez, Hx, Hy, Hz);
 
-                    // Legacy detectors
-                    bundle->boxFlux->try_record(n, Ex, Ey, Ez, Hx, Hy, Hz);
-                    bundle->boxEM->try_record(n, Ex, Ey, Ez, Hx, Hy, Hz);
-
-                    // New modular detectors
                     for (auto& det : bundle->field_movies) {
                         det->record_after_E(n, dt, Ex, Ey, Ez, Hx, Hy, Hz);
                     }
