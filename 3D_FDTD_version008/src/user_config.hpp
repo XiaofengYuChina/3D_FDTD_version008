@@ -98,7 +98,78 @@ constexpr bool   CPML_ALPHA_LINEAR = true;  // Linear alpha distribution
 // ============================================================================
 //                         4. SOURCE CONFIGURATION
 // ============================================================================
+//
+// Source Types Available:
+//   0 = Dipole (point current source)
+//   1 = PlaneWave (plane wave source)
+//
+// Waveform Types:
+//   0 = Ricker (Mexican hat wavelet)
+//   1 = GaussianModulatedSine
+//   2 = RickerLikeGaussian2nd
+//   3 = ContinuousWave (with smooth turn-on)
+//
+// Polarization:
+//   0 = Ex, 1 = Ey, 2 = Ez, 3 = Hx, 4 = Hy, 5 = Hz
 
+// -------------------- Dipole Source Definition --------------------
+struct DipoleSourceDef {
+    bool enabled;               // Whether this source is active
+    double x, y, z;             // Position (meters)
+    double amplitude;           // Peak current (A)
+    double frequency;           // Frequency (Hz), 0 = use wavelength
+    double wavelength;          // Wavelength (m), used if frequency <= 0
+    double tau;                 // Time constant (s), 0 = auto
+    double df_fwhm;             // Bandwidth FWHM (Hz), used if tau <= 0
+    double t0_factor;           // t0 = t0_factor * tau_eff
+    int waveform;               // 0=Ricker, 1=GaussianModulatedSine, 2=RickerLikeGaussian2nd, 3=CW
+    int polarization;           // 0=Ex, 1=Ey, 2=Ez
+};
+
+// Define dipole sources here
+inline const std::vector<DipoleSourceDef> DIPOLE_SOURCES = {
+    // Default dipole source
+    {true, 1100e-9, 2000e-9, 500e-9,   // enabled, x, y, z
+     1e-5,                              // amplitude (A)
+     0.0, 1500e-9,                      // frequency (Hz), wavelength (m)
+     5e-15, 2.4e13,                     // tau (s), df_fwhm (Hz)
+     3.0,                               // t0_factor
+     0,                                 // waveform (Ricker)
+     2},                                // polarization (Ez)
+};
+
+// -------------------- Plane Wave Source Definition --------------------
+struct PlaneWaveSourceDef {
+    bool enabled;               // Whether this source is active
+    double injection_position;  // Position along propagation axis (meters)
+    double amplitude;           // Peak E-field (V/m)
+    double frequency;           // Frequency (Hz), 0 = use wavelength
+    double wavelength;          // Wavelength (m)
+    double tau;                 // Time constant (s), 0 = auto
+    double df_fwhm;             // Bandwidth FWHM (Hz)
+    double t0_factor;           // t0 = t0_factor * tau_eff
+    int waveform;               // 0=Ricker, 1=GaussianModulatedSine, 2=RickerLikeGaussian2nd, 3=CW
+    int direction;              // 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+    int polarization;           // 0=Ex, 1=Ey, 2=Ez (perpendicular to propagation)
+    // Injection region bounds (0,0,0,0,0,0 = full domain)
+    double x_min, x_max, y_min, y_max, z_min, z_max;
+};
+
+// Define plane wave sources here
+inline const std::vector<PlaneWaveSourceDef> PLANE_WAVE_SOURCES = {
+    // Example: disabled plane wave
+    // {true, 200e-9,                    // enabled, injection_position
+    //  1.0,                             // amplitude (V/m)
+    //  0.0, 500e-9,                     // frequency (Hz), wavelength (m)
+    //  0.0, 0.0,                        // tau (s), df_fwhm (Hz) - auto
+    //  3.0,                             // t0_factor
+    //  1,                               // waveform (GaussianModulatedSine)
+    //  4,                               // direction (+Z)
+    //  0,                               // polarization (Ex)
+    //  0, 0, 0, 0, 0, 0},               // injection region (full domain)
+};
+
+// -------------------- Legacy compatibility settings --------------------
 // Source type: 0 = Ricker, 1 = GaussianModulatedSine, 2 = RickerLikeGaussian2nd
 constexpr int SOURCE_WAVEFORM = 0;
 
@@ -129,14 +200,73 @@ constexpr double SOURCE_Z = 500e-9;     // Source z position (m)
 // ============================================================================
 //                         5. DETECTOR CONFIGURATION
 // ============================================================================
+//
+// Detector Types Available:
+//   - MeshDetector: Outputs refractive index distribution and mesh grid info
+//   - FieldMovie2D: Records 2D slices of field components over time
+//   - PointFieldDetector: Records field time series at a single point
+//
+// Field Components:
+//   0=Ex, 1=Ey, 2=Ez, 3=Hx, 4=Hy, 5=Hz,
+//   6=E_magnitude, 7=H_magnitude, 8=Sx, 9=Sy, 10=Sz, 11=S_magnitude
+//
+// Slice Planes:
+//   0=XY (z=const), 1=XZ (y=const), 2=YZ (x=const)
 
 // Output directory tag (results saved to frames/<RUN_TAG>/)
 inline const std::string RUN_TAG = "3D_FDTD_v008_output";
 
-// --- Detector position specification ---
-// Use ABSOLUTE PHYSICAL COORDINATES (in meters)
-// Coordinates must be within the physical domain boundaries defined above.
+// -------------------- Mesh Detector Definition --------------------
+struct MeshDetectorDef {
+    bool enabled;               // Whether this detector is active
+    std::string name;           // Output directory name
+    double slice_position;      // Position along normal axis (meters)
+    int slice_plane;            // 0=XY, 1=XZ, 2=YZ
+    bool export_mesh_lines;     // Export cell boundary coordinates
+    bool export_spacing;        // Export dx, dy, dz arrays
+};
 
+// Define mesh detectors here
+inline const std::vector<MeshDetectorDef> MESH_DETECTORS = {
+    {true, "mesh_info", 500e-9, 0, true, true},  // XY plane at z=500nm
+};
+
+// -------------------- Field Movie 2D Definition --------------------
+struct FieldMovie2DDef {
+    bool enabled;               // Whether this detector is active
+    std::string name;           // Output directory name
+    int field_component;        // 0=Ex, 1=Ey, 2=Ez, 3=Hx, 4=Hy, 5=Hz, etc.
+    int slice_plane;            // 0=XY, 1=XZ, 2=YZ
+    double slice_position;      // Position in physical coords (meters)
+    std::string frame_pattern;  // Output filename pattern
+};
+
+// Define field movie detectors here
+inline const std::vector<FieldMovie2DDef> FIELD_MOVIE_2D_DETECTORS = {
+    // Ez field on XY plane at z=500nm
+    {true, "Ez_movie", 2, 0, 500e-9, "ez_%04d.raw"},
+    // Uncomment to add more:
+    // {true, "Ex_movie", 0, 0, 500e-9, "ex_%04d.raw"},
+    // {true, "Hy_movie", 4, 0, 500e-9, "hy_%04d.raw"},
+};
+
+// -------------------- Point Field Detector Definition --------------------
+struct PointFieldDetectorDef {
+    bool enabled;               // Whether this detector is active
+    std::string name;           // Output directory name
+    double x, y, z;             // Position (meters)
+    std::vector<int> components; // Field components to record (0=Ex, 1=Ey, 2=Ez, etc.)
+};
+
+// Define point field detectors here
+inline const std::vector<PointFieldDetectorDef> POINT_FIELD_DETECTORS = {
+    // Ez probe at center
+    {true, "Ez_probe", 2000e-9, 2000e-9, 500e-9, {2}},  // Ez only
+    // Uncomment to add more:
+    // {true, "E_probe", 1500e-9, 1500e-9, 500e-9, {0, 1, 2}},  // Ex, Ey, Ez
+};
+
+// -------------------- Legacy compatibility settings --------------------
 // 2D slice detector: z-slice position in physical coordinates (meters)
 constexpr double Z_SLICE_Z = 500e-9;    // Z position of the XY slice (m)
 
