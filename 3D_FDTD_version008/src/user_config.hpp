@@ -169,34 +169,6 @@ inline const std::vector<PlaneWaveSourceDef> PLANE_WAVE_SOURCES = {
     //  0, 0, 0, 0, 0, 0},               // injection region (full domain)
 };
 
-// -------------------- Legacy compatibility settings --------------------
-// Source type: 0 = Ricker, 1 = GaussianModulatedSine, 2 = RickerLikeGaussian2nd
-constexpr int SOURCE_WAVEFORM = 0;
-
-// Peak current (Amperes)
-constexpr double SOURCE_IZ_PEAK = 1e-5;
-
-// Source frequency (Hz) - if 0, uses LAMBDA0 to calculate
-constexpr double SOURCE_F0 = 0.0;
-
-// Pulse width parameters
-constexpr double SOURCE_TAU = 5e-15;        // Time constant (s)
-constexpr double SOURCE_DF_FWHM = 2.4e13;   // Bandwidth FWHM (Hz)
-
-// Time delay factor (t0 = t0_factor * tau_eff)
-// If <= 0, uses default t0 = 3/f0
-// NOTE: Should be >= 3.0 for Ricker wavelet to start from near-zero
-// With t0_factor=0.4, the pulse starts at 25-50% amplitude at t=0
-constexpr double SOURCE_T0_FACTOR = 3.0;
-
-// Source position: Use ABSOLUTE PHYSICAL COORDINATES (in meters)
-// These coordinates must be within [DOMAIN_X_MIN, DOMAIN_X_MAX] etc.
-// Example: For a 2um x 2um x 1um domain, center is at (1000nm, 1000nm, 500nm)
-constexpr double SOURCE_X = 1100e-9;    // Source x position (m) - domain center
-constexpr double SOURCE_Y = 2000e-9;    // Source y position (m)
-constexpr double SOURCE_Z = 500e-9;     // Source z position (m)
-
-
 // ============================================================================
 //                         5. DETECTOR CONFIGURATION
 // ============================================================================

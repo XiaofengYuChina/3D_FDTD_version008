@@ -539,15 +539,25 @@ namespace Config {
 
         // Save mesh metadata as JSON (with source position for Python visualization)
         {
-            // Calculate source position - target physical coordinates
+            // Calculate physical domain size
             const real phys_x_size = ctx.grid_spacing.x_bounds[ctx.NxT - ctx.npml] - ctx.grid_spacing.x_bounds[ctx.npml];
             const real phys_y_size = ctx.grid_spacing.y_bounds[ctx.NyT - ctx.npml] - ctx.grid_spacing.y_bounds[ctx.npml];
             const real phys_z_size = ctx.grid_spacing.z_bounds[ctx.NzT - ctx.npml] - ctx.grid_spacing.z_bounds[ctx.npml];
 
-            // Use explicitly specified source positions (relative to physical domain origin)
-            real src_x_target = P.source_x - P.domain_x_min;
-            real src_y_target = P.source_y - P.domain_y_min;
-            real src_z_target = P.source_z - P.domain_z_min;
+            // Get source position from DIPOLE_SOURCES (use first enabled source, or domain center if none)
+            real src_x_target = phys_x_size / 2.0;  // Default: domain center
+            real src_y_target = phys_y_size / 2.0;
+            real src_z_target = phys_z_size / 2.0;
+            bool has_source = false;
+            for (const auto& def : UserConfig::DIPOLE_SOURCES) {
+                if (def.enabled) {
+                    src_x_target = def.x - P.domain_x_min;
+                    src_y_target = def.y - P.domain_y_min;
+                    src_z_target = def.z - P.domain_z_min;
+                    has_source = true;
+                    break;  // Use first enabled source
+                }
+            }
 
             // Convert target physical coordinates to grid indices
             const size_t src_i = ctx.grid_spacing.physical_to_index_x(src_x_target);
@@ -1099,17 +1109,6 @@ namespace Config {
         p.S = UserConfig::CFL_FACTOR;
         p.nSteps = UserConfig::N_STEPS;
         p.saveEvery = UserConfig::SAVE_EVERY;
-
-        // Source parameters
-        p.Iz_peak = UserConfig::SOURCE_IZ_PEAK;
-        p.f0 = UserConfig::SOURCE_F0;
-        p.tau_src = UserConfig::SOURCE_TAU;
-        p.df_fwhm = UserConfig::SOURCE_DF_FWHM;
-        p.t0_factor = UserConfig::SOURCE_T0_FACTOR;
-        // Source physical coordinates (absolute)
-        p.source_x = UserConfig::SOURCE_X;
-        p.source_y = UserConfig::SOURCE_Y;
-        p.source_z = UserConfig::SOURCE_Z;
 
         // Detector settings
         p.run_tag = UserConfig::RUN_TAG;
