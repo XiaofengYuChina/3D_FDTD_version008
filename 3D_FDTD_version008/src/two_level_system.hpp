@@ -421,8 +421,14 @@ inline void update_populations(
 
                 // FIX #3: Simple linear spontaneous decay: -Nu/τ
                 // (Original code had -Nu·(1-Ng/Ng0)/τ = -Nu²/(τ·Ng0), which was WRONG)
-                real dNu_dt = -inv_tau * Nu_curr - stim_rate;
-                real dNg_dt = +inv_tau * Nu_curr + stim_rate;
+                //
+                // FIX #5: Stimulated term sign correction
+                // Physical meaning of stim_rate = E·(dP/dt)/(ℏω):
+                //   - stim_rate > 0: field does positive work on medium → ABSORPTION → Nu increases
+                //   - stim_rate < 0: field does negative work on medium → STIMULATED EMISSION → Nu decreases
+                // Therefore: dNu/dt = -Nu/τ + stim_rate (NOT minus!)
+                real dNu_dt = -inv_tau * Nu_curr + stim_rate;
+                real dNg_dt = +inv_tau * Nu_curr - stim_rate;
 
                 // Forward Euler update
                 state.Nu[id] += dt * dNu_dt;
