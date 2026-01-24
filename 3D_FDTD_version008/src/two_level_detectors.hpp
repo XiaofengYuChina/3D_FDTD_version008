@@ -12,48 +12,54 @@
 namespace fs = std::filesystem;
 
 // ======================= Population time series detector =======================
+// VOLUME DENSITY FORMULATION: Nu, Ng are densities [m^-3]
+// Binary files store raw densities for spatial analysis
+// CSV integrates with cell volume to get total atom counts
 struct PopulationTimeSeriesDetector {
     fs::path det_dir;
     fs::path Nu_bin, Ng_bin, inversion_csv;
-    
+
     std::ofstream f_Nu, f_Ng, f_inv;
-    
+
     size_t NxT, NyT, NzT;
     size_t saveEvery, nSteps;
     real dt;
-    
+    const GridSpacing* grid_ptr;  // Store reference for volume integration
+
     PopulationTimeSeriesDetector(
         const fs::path& out_root,
         std::string det_name,
         size_t NxT_, size_t NyT_, size_t NzT_,
-        size_t saveEvery_, size_t nSteps_, real dt_
+        size_t saveEvery_, size_t nSteps_, real dt_,
+        const GridSpacing& grid
     ) : det_dir(out_root / det_name),
         NxT(NxT_), NyT(NyT_), NzT(NzT_),
-        saveEvery(saveEvery_), nSteps(nSteps_), dt(dt_)
+        saveEvery(saveEvery_), nSteps(nSteps_), dt(dt_),
+        grid_ptr(&grid)
     {
         std::error_code ec;
         fs::create_directories(det_dir, ec);
         if (ec) {
             std::cerr << "[ERR] create " << det_dir << ": " << ec.message() << "\n";
         }
-        
+
         Nu_bin = det_dir / "populations_Nu.bin";
         Ng_bin = det_dir / "populations_Ng.bin";
         inversion_csv = det_dir / "inversion_time.csv";
-        
+
         f_Nu.open(Nu_bin, std::ios::binary);
         f_Ng.open(Ng_bin, std::ios::binary);
         f_inv.open(inversion_csv, std::ios::out);
-        
+
         if (!f_Nu || !f_Ng || !f_inv) {
             std::cerr << "[ERR] Failed to open population detector files\n";
         }
-        
-        // CSV header
+
+        // CSV header - note: totals are now integrated (atoms), not sum of densities
         if (f_inv) {
             f_inv << "t, total_Nu, total_Ng, inversion, inv_fraction\n";
         }
-        
+
         // Metadata
         std::ofstream meta(det_dir / "metadata_populations.json");
         if (meta) {
@@ -65,44 +71,54 @@ struct PopulationTimeSeriesDetector {
                  << "  \"nSteps\": " << nSteps << ",\n"
                  << "  \"dt\": " << std::setprecision(18) << dt << ",\n"
                  << "  \"dtype\": \"float64\",\n"
+                 << "  \"binary_data_units\": \"m^-3 (density)\",\n"
+                 << "  \"csv_total_units\": \"atoms (integrated)\",\n"
                  << "  \"what\": \"population_densities_Nu_and_Ng_vs_time\"\n"
                  << "}\n";
         }
-        
+
         std::cout << "[PopulationTS] " << det_dir << "\n";
     }
-    
+
     void record(size_t n, const TwoLevelState& state) {
         if (n % saveEvery != 0) return;
         if (!f_Nu || !f_Ng || !f_inv) return;
-        
+
         const size_t N = state.Nu.size();
-        
-        // Write binary snapshots (full 3D grid)
+
+        // Write binary snapshots (full 3D grid) - raw densities [m^-3]
         for (size_t i = 0; i < N; ++i) {
             double nu_val = static_cast<double>(state.Nu[i]);
             double ng_val = static_cast<double>(state.Ng[i]);
             f_Nu.write(reinterpret_cast<const char*>(&nu_val), sizeof(double));
             f_Ng.write(reinterpret_cast<const char*>(&ng_val), sizeof(double));
         }
-        
-        // Calculate totals for CSV
+
+        // Calculate integrated totals for CSV (density × dV = atoms)
         double total_Nu = 0.0, total_Ng = 0.0;
-        for (size_t i = 0; i < N; ++i) {
-            total_Nu += state.Nu[i];
-            total_Ng += state.Ng[i];
+        for (size_t i = 0; i < NxT; ++i) {
+            for (size_t j = 0; j < NyT; ++j) {
+                for (size_t k = 0; k < NzT; ++k) {
+                    size_t id = idx3(i, j, k, NyT, NzT);
+                    if (state.Ndip[id] <= 0) continue;
+
+                    real dV = grid_ptr->dx[i] * grid_ptr->dy[j] * grid_ptr->dz[k];
+                    total_Nu += state.Nu[id] * dV;
+                    total_Ng += state.Ng[id] * dV;
+                }
+            }
         }
-        
+
         double inversion = total_Nu - total_Ng;
         double denom = total_Nu + total_Ng;
         double inv_fraction = (denom > 1e-30) ? (inversion / denom) : 0.0;
-        
+
         real t = n * dt;
         f_inv << std::setprecision(18) << t << ","
               << total_Nu << "," << total_Ng << ","
               << inversion << "," << inv_fraction << "\n";
     }
-    
+
     ~PopulationTimeSeriesDetector() {
         if (f_Nu) f_Nu.close();
         if (f_Ng) f_Ng.close();
@@ -111,12 +127,14 @@ struct PopulationTimeSeriesDetector {
 };
 
 // ======================= Spatial population snapshot (2D slice) =======================
+// VOLUME DENSITY FORMULATION: Inversion data is density [m^-3]
+// This is useful for spatial analysis of inversion distribution
 struct PopulationSlice2D {
     fs::path det_dir;
     size_t NxT, NyT, NzT, kslice;
     size_t saveEvery;
     size_t frameId{0};
-    
+
     PopulationSlice2D(
         const fs::path& out_root,
         std::string det_name,
@@ -131,7 +149,7 @@ struct PopulationSlice2D {
         if (ec) {
             std::cerr << "[ERR] create " << det_dir << ": " << ec.message() << "\n";
         }
-        
+
         std::ofstream meta(det_dir / "metadata.json");
         if (meta) {
             meta << "{\n"
@@ -141,25 +159,26 @@ struct PopulationSlice2D {
                  << "  \"kslice\": " << kslice << ",\n"
                  << "  \"saveEvery\": " << saveEvery << ",\n"
                  << "  \"dtype\": \"float64\",\n"
-                 << "  \"what\": \"population_inversion_xy_slice\"\n"
+                 << "  \"units\": \"m^-3 (inversion density)\",\n"
+                 << "  \"what\": \"population_inversion_density_xy_slice\"\n"
                  << "}\n";
         }
-        
+
         std::cout << "[PopulationSlice] " << det_dir << "\n";
     }
-    
+
     void save_slice(size_t n, const TwoLevelState& state) {
         if (n % saveEvery != 0) return;
-        
+
         char fname[128];
-        std::snprintf(fname, sizeof(fname), "inversion_%04d.raw", 
+        std::snprintf(fname, sizeof(fname), "inversion_%04d.raw",
                      static_cast<int>(frameId++));
-        
+
         fs::path out = det_dir / fname;
         std::ofstream ofs(out, std::ios::binary);
         if (!ofs) return;
-        
-        // Write inversion (Nu - Ng) at z=kslice
+
+        // Write inversion density (Nu - Ng) at z=kslice [m^-3]
         for (size_t i = 0; i < NxT; ++i) {
             for (size_t j = 0; j < NyT; ++j) {
                 size_t id = idx3(i, j, kslice, NyT, NzT);
@@ -221,8 +240,8 @@ struct PolarizationDiagnostics {
             for (size_t j = 0; j < NyT; ++j) {
                 for (size_t k = 0; k < NzT; ++k) {
                     size_t id = idx3(i, j, k, NyT, NzT);
-                    if (state.Ndip[id] < 1e-20) continue;  // Skip only truly empty cells
-                    
+                    if (state.Ndip[id] <= 0) continue;  // Skip cells with no gain medium
+
                     real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
                     P_energy += 0.5 * state.Pz[id] * state.Pz[id] * dV;
                 }
@@ -241,67 +260,81 @@ struct PolarizationDiagnostics {
 };
 
 // ======================= Gain/Loss monitoring =======================
+// VOLUME DENSITY FORMULATION: Properly integrates densities with cell volume
 struct GainLossMonitor {
     fs::path det_dir;
     fs::path csv_path;
     std::ofstream f_csv;
-    
+
+    size_t NxT, NyT, NzT;
     size_t saveEvery;
     real dt;
-    
+    const GridSpacing* grid_ptr;  // Store reference for volume integration
+
     GainLossMonitor(
         const fs::path& out_root,
         std::string det_name,
-        size_t saveEvery_, real dt_
+        size_t NxT_, size_t NyT_, size_t NzT_,
+        size_t saveEvery_, real dt_,
+        const GridSpacing& grid
     ) : det_dir(out_root / det_name),
-        saveEvery(saveEvery_), dt(dt_)
+        NxT(NxT_), NyT(NyT_), NzT(NzT_),
+        saveEvery(saveEvery_), dt(dt_),
+        grid_ptr(&grid)
     {
         std::error_code ec;
         fs::create_directories(det_dir, ec);
-        
+
         csv_path = det_dir / "gain_loss_time.csv";
         f_csv.open(csv_path, std::ios::out);
-        
+
         if (f_csv) {
-            f_csv << "t, total_inversion, avg_inversion_density, "
-                  << "max_Nu, max_Ng, gain_available\n";
+            f_csv << "t, integrated_inversion, avg_inversion_density, "
+                  << "max_Nu_density, max_Ng_density, gain_available\n";
         }
-        
+
         std::cout << "[GainLossMonitor] " << det_dir << "\n";
     }
-    
+
     void record(size_t n, const TwoLevelState& state) {
         if (n % saveEvery != 0) return;
         if (!f_csv) return;
-        
-        double total_inversion = 0.0;
+
+        double integrated_inversion = 0.0;
         double total_volume = 0.0;
         double max_Nu = 0.0, max_Ng = 0.0;
-        
-        for (size_t i = 0; i < state.Nu.size(); ++i) {
-            if (state.Ndip[i] < 1e-20) continue;  // Skip only truly empty cells
-            
-            double inv = state.Nu[i] - state.Ng[i];
-            total_inversion += inv;
-            total_volume += 1.0;  // Count active cells
-            
-            max_Nu = std::max(max_Nu, static_cast<double>(state.Nu[i]));
-            max_Ng = std::max(max_Ng, static_cast<double>(state.Ng[i]));
+
+        for (size_t i = 0; i < NxT; ++i) {
+            for (size_t j = 0; j < NyT; ++j) {
+                for (size_t k = 0; k < NzT; ++k) {
+                    size_t id = idx3(i, j, k, NyT, NzT);
+                    if (state.Ndip[id] <= 0) continue;  // Skip cells with no gain medium
+
+                    real dV = grid_ptr->dx[i] * grid_ptr->dy[j] * grid_ptr->dz[k];
+                    double inv_density = state.Nu[id] - state.Ng[id];
+                    integrated_inversion += inv_density * dV;  // [atoms]
+                    total_volume += dV;
+
+                    max_Nu = std::max(max_Nu, static_cast<double>(state.Nu[id]));
+                    max_Ng = std::max(max_Ng, static_cast<double>(state.Ng[id]));
+                }
+            }
         }
-        
-        double avg_inv_density = (total_volume > 0) ? 
-            total_inversion / total_volume : 0.0;
-        
-        // Gain available: positive inversion means gain
-        bool gain_available = (total_inversion > 0);
-        
+
+        // Average inversion density = integrated_inversion / total_volume [m^-3]
+        double avg_inv_density = (total_volume > 0) ?
+            integrated_inversion / total_volume : 0.0;
+
+        // Gain available: positive integrated inversion means net gain
+        bool gain_available = (integrated_inversion > 0);
+
         real t = n * dt;
         f_csv << std::setprecision(18) << t << ","
-              << total_inversion << "," << avg_inv_density << ","
+              << integrated_inversion << "," << avg_inv_density << ","
               << max_Nu << "," << max_Ng << ","
               << (gain_available ? 1 : 0) << "\n";
     }
-    
+
     ~GainLossMonitor() {
         if (f_csv) f_csv.close();
     }
@@ -309,6 +342,7 @@ struct GainLossMonitor {
 
 // ======================= TLS Global Population History =======================
 // Records global population statistics over time for the gain region only
+// VOLUME DENSITY FORMULATION: Properly integrates densities with cell volume
 // Generates CSV output and Python plotting script (portable, no pandas dependency)
 struct TLSGlobalHistory {
     fs::path out_dir;           // Output directory (frames/<run_tag>/)
@@ -318,17 +352,20 @@ struct TLSGlobalHistory {
     size_t saveEvery;
     real dt;
     bool auto_plot;             // Whether to auto-run Python script (default: false)
+    const GridSpacing* grid_ptr;  // Store reference for volume integration
 
     TLSGlobalHistory(
         const fs::path& out_root,
         const TwoLevelState& state,  // Get gain bounds from state directly
+        const GridSpacing& grid,     // Grid spacing for volume integration
         size_t saveEvery_,
         real dt_,
         bool enable_auto_plot = false  // Default: don't auto-run Python
     ) : out_dir(out_root),
         saveEvery(saveEvery_),
         dt(dt_),
-        auto_plot(enable_auto_plot)
+        auto_plot(enable_auto_plot),
+        grid_ptr(&grid)
     {
         std::error_code ec;
         fs::create_directories(out_dir, ec);
@@ -362,7 +399,7 @@ struct TLSGlobalHistory {
         const size_t j0 = state.gain_j0, j1 = state.gain_j1;
         const size_t k0 = state.gain_k0, k1 = state.gain_k1;
 
-        // Sum ALL cells within gain region bounds (no Ndip filter)
+        // Integrate density × dV over gain region to get total atom counts
         double Nu_total = 0.0;
         double Ng_total = 0.0;
 
@@ -370,8 +407,9 @@ struct TLSGlobalHistory {
             for (size_t j = j0; j < j1; ++j) {
                 for (size_t k = k0; k < k1; ++k) {
                     size_t id = idx3(i, j, k, state.NyT, state.NzT);
-                    Nu_total += state.Nu[id];
-                    Ng_total += state.Ng[id];
+                    real dV = grid_ptr->dx[i] * grid_ptr->dy[j] * grid_ptr->dz[k];
+                    Nu_total += state.Nu[id] * dV;  // [atoms]
+                    Ng_total += state.Ng[id] * dV;  // [atoms]
                 }
             }
         }
@@ -419,9 +457,14 @@ struct TLSGlobalHistory {
 TLS Global Population History Plotter
 
 Automatically generated by 3D_FDTD_version008
+
+VOLUME DENSITY FORMULATION:
+  Population data (Nu_total, Ng_total) are integrated values: ∫ N(r) dV [atoms]
+  This ensures grid-independent results - changing resolution does NOT change totals.
+
 Reads tls_global_history.csv and generates 3 plots:
-  1. tls_Nu_Ng.png           - Nu_total(t) and Ng_total(t)
-  2. tls_inversion.png       - inversion_total(t)
+  1. tls_Nu_Ng.png           - Nu_total(t) and Ng_total(t) [atoms]
+  2. tls_inversion.png       - inversion_total(t) = Nu - Ng [atoms]
   3. tls_percent_and_norm.png - Nu_percent, Ng_percent, inv_norm vs time
 
 No pandas dependency - uses only csv module and numpy.
@@ -481,7 +524,7 @@ ax1.plot(t, data['Nu_total'], 'b-', linewidth=1.5, label='$N_u$ (upper level)')
 ax1.plot(t, data['Ng_total'], 'r-', linewidth=1.5, label='$N_g$ (ground level)')
 
 ax1.set_xlabel('Time (fs)', fontsize=12)
-ax1.set_ylabel('Total Population (atoms)', fontsize=12)
+ax1.set_ylabel('Integrated Population (atoms)', fontsize=12)
 ax1.set_title('Two-Level System: Global Population Dynamics', fontsize=14)
 ax1.legend(loc='best', fontsize=11)
 ax1.grid(True, alpha=0.3)
@@ -505,7 +548,7 @@ ax2.fill_between(t, inv, 0, where=(inv > 0), color='green', alpha=0.2, label='Ga
 ax2.fill_between(t, inv, 0, where=(inv < 0), color='red', alpha=0.2, label='Absorption (Ng > Nu)')
 
 ax2.set_xlabel('Time (fs)', fontsize=12)
-ax2.set_ylabel('Population Inversion ($N_u - N_g$)', fontsize=12)
+ax2.set_ylabel('Integrated Inversion (atoms)', fontsize=12)
 ax2.set_title('Two-Level System: Population Inversion', fontsize=14)
 ax2.legend(loc='best', fontsize=11)
 ax2.grid(True, alpha=0.3)

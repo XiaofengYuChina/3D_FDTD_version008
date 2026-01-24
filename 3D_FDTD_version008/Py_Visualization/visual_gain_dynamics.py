@@ -2,6 +2,10 @@
 """
 visual_gain_dynamics.py - Visualize population inversion dynamics
 
+VOLUME DENSITY FORMULATION:
+  The CSV contains integrated values (atoms), computed from densities [m^-3]
+  by integrating over cell volumes: total_Nu = ∫ Nu(r) dV
+
 Definitions:
   inv_sym = (Nu - Ng) / (Nu + Ng)   -- symmetric normalized inversion, range [-1, 1]
   inv_01  = Nu / (Nu + Ng)          -- 0-to-1 population fraction, range [0, 1]
@@ -53,7 +57,7 @@ def main():
     # Plot 1: Inversion (Nu - Ng)
     axes[0].plot(times_fs, inversion, 'b-', linewidth=2)
     axes[0].axhline(0, color='r', linestyle='--', alpha=0.5)
-    axes[0].set_ylabel('Total Inversion (Nu - Ng)')
+    axes[0].set_ylabel('Integrated Inversion (atoms)')
     axes[0].set_title('Population Inversion Dynamics', fontweight='bold')
     axes[0].grid(True, alpha=0.3)
 
@@ -62,10 +66,10 @@ def main():
                      transform=axes[0].transAxes, fontsize=14, ha='center',
                      bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
 
-    # Plot 2: Populations
+    # Plot 2: Populations (integrated: ∫N dV)
     axes[1].plot(times_fs, Nu, 'r-', label='Nu (upper)', linewidth=2)
     axes[1].plot(times_fs, Ng, 'b-', label='Ng (ground)', linewidth=2)
-    axes[1].set_ylabel('Population Density')
+    axes[1].set_ylabel('Integrated Population (atoms)')
     axes[1].set_title('Upper and Ground State Populations', fontweight='bold')
     axes[1].legend(fontsize=11)
     axes[1].grid(True, alpha=0.3)

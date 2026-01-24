@@ -173,15 +173,19 @@ int main() {
     std::unique_ptr<TLSGlobalHistory> tls_global_history;
 
     if (UserConfig::TLS_ENABLED) {
+        // VOLUME DENSITY FORMULATION: Pass GridSpacing for proper integration
         pop_detector = std::make_unique<PopulationTimeSeriesDetector>(
             out_root, "populations",
             NxT, NyT, NzT,
-            P.saveEvery, P.nSteps, P.dt
+            P.saveEvery, P.nSteps, P.dt,
+            ctx.grid_spacing  // For density × dV integration
         );
 
         gain_monitor = std::make_unique<GainLossMonitor>(
             out_root, "gain_monitor",
-            P.saveEvery, P.dt
+            NxT, NyT, NzT,
+            P.saveEvery, P.dt,
+            ctx.grid_spacing  // For density × dV integration
         );
 
         pol_diagnostics = std::make_unique<PolarizationDiagnostics>(
@@ -195,6 +199,7 @@ int main() {
         tls_global_history = std::make_unique<TLSGlobalHistory>(
             out_root,
             tls_state,           // Pass state to get gain bounds
+            ctx.grid_spacing,    // For density × dV integration
             P.saveEvery,
             P.dt,
             false                // auto_plot disabled by default (portable)
@@ -413,8 +418,9 @@ int main() {
 
             if (UserConfig::TLS_ENABLED) {
                 real max_P = NumericUtils::max_abs(tls_state.Pz);
-                real total_Nu = compute_total_Nu(tls_state);
-                real total_Ng = compute_total_Ng(tls_state);
+                // VOLUME DENSITY FORMULATION: Use integrated functions
+                real total_Nu = compute_integrated_Nu(tls_state, ctx.grid_spacing);
+                real total_Ng = compute_integrated_Ng(tls_state, ctx.grid_spacing);
                 real inversion = total_Nu - total_Ng;
                 std::cout << "step " << n << " | max|E| = " << std::scientific << std::setprecision(3) << max_E
                           << " | max|P| = " << max_P

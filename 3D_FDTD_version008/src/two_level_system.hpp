@@ -167,10 +167,12 @@ struct TwoLevelState {
     size_t gain_j0 = 0, gain_j1 = 0;
     size_t gain_k0 = 0, gain_k1 = 0;
 
-    // Population densities (m⁻³)
-    std::vector<real> Ng;           // Ground state density Ng(r⃗,t)
-    std::vector<real> Nu;           // Upper state density Nu(r⃗,t)
-    std::vector<real> Ng0;          // Initial ground state density Ng⁰(r⃗) = total density
+    // Population densities [m^-3] (VOLUME DENSITY FORMULATION)
+    // All population quantities are densities, NOT per-cell counts
+    // This ensures physics is independent of grid resolution (dx, dy, dz)
+    std::vector<real> Ng;           // Ground state density Ng(r⃗,t) [m^-3]
+    std::vector<real> Nu;           // Upper state density Nu(r⃗,t) [m^-3]
+    std::vector<real> Ng0;          // Total density N_total(r⃗) = Ng + Nu [m^-3] (conserved)
 
     // Polarization (C/m²) - Three-point recursion storage
     std::vector<real> Pz;           // Current polarization Pz(r⃗,t) = P^n
@@ -181,8 +183,8 @@ struct TwoLevelState {
     // stim = E_avg * ΔP / (ℏωa), where E_avg = 0.5*(Ez_new + Ez_old)
     std::vector<real> Ez_old;       // Previous time step Ez for stim calculation
 
-    // Dipole density distribution Ndip(r⃗)
-    std::vector<real> Ndip;         // Only nonzero where gain medium exists
+    // Dipole density distribution Ndip(r⃗) [m^-3]
+    std::vector<real> Ndip;         // Total dipole density, nonzero only in gain region
 
     void allocate(size_t Nx, size_t Ny, size_t Nz) {
         NxT = Nx; NyT = Ny; NzT = Nz;
@@ -203,15 +205,16 @@ struct TwoLevelState {
     // Previous: for (i = i0; i <= i1) gave size = (i1-i0+1), one extra cell
     // Now: for (i = i0; i < i1) gives size = (i1-i0), exactly as specified
     //
-    // CRITICAL FIX (Issue F): N0_density is atoms/m³, must multiply by cell volume
-    // Previous: Ndip[id] = N0_total (treating density as per-cell count - WRONG!)
-    // Now: Ndip[id] = N0_density * cell_volume (correct atoms per cell)
+    // VOLUME DENSITY FORMULATION:
+    // All population quantities (Ndip, Nu, Ng, Ng0) are now VOLUME DENSITIES [m^-3]
+    // This ensures grid-independent physics: changing resolution (dx,dy,dz) does NOT
+    // change macroscopic behavior (gain, threshold, etc.)
     void initialize_gain_region(
         size_t i0, size_t i1,   // Half-open interval [i0, i1)
         size_t j0, size_t j1,   // Half-open interval [j0, j1)
         size_t k0, size_t k1,   // Half-open interval [k0, k1)
-        real N0_density,        // Dipole DENSITY in atoms/m³ (NOT atoms per cell!)
-        const GridSpacing& grid, // Grid spacing for cell volume calculation
+        real N0_density,        // Dipole density [atoms/m³]
+        const GridSpacing& grid, // Grid spacing for computing total volume
         real inversion_fraction = 0.1  // Initial population in upper state
     ) {
         // Boundary validation: ensure indices are within grid bounds
@@ -231,7 +234,7 @@ struct TwoLevelState {
         gain_k0 = k0; gain_k1 = k1;
 
         // Statistics for debugging
-        real total_atoms = 0.0;
+        real total_volume = 0.0;
         real min_cell_vol = 1e30, max_cell_vol = 0.0;
 
         for (size_t i = i0; i < i1; ++i) {       // Half-open: [i0, i1)
@@ -239,41 +242,40 @@ struct TwoLevelState {
                 for (size_t k = k0; k < k1; ++k) { // Half-open: [k0, k1)
                     size_t id = idx3(i, j, k, NyT, NzT);
 
-                    // CRITICAL FIX: Convert density to atoms per cell
-                    // N0_density is in atoms/m³, cell_volume is in m³
-                    // N0_cell = N0_density × dV has units of atoms (dimensionless count)
+                    // VOLUME DENSITY FORMULATION:
+                    // Ndip, Nu, Ng, Ng0 are all densities [m^-3], NOT atoms per cell
+                    // This makes the physics grid-independent
+                    Ndip[id] = N0_density;                          // [m^-3]
+                    Nu[id]   = inversion_fraction * N0_density;     // [m^-3]
+                    Ng[id]   = (1.0 - inversion_fraction) * N0_density;  // [m^-3]
+                    Ng0[id]  = N0_density;  // Total density (conserved) [m^-3]
+
+                    // Track volume statistics
                     real cell_volume = grid.dx[i] * grid.dy[j] * grid.dz[k];
-                    real N0_cell = N0_density * cell_volume;
-
-                    // Set dipole count per cell (not density!)
-                    Ndip[id] = N0_cell;
-
-                    // Initialize populations with partial inversion
-                    Nu[id] = inversion_fraction * N0_cell;
-                    Ng[id] = (1.0 - inversion_fraction) * N0_cell;
-                    Ng0[id] = N0_cell;  // Store initial total per cell
-
-                    // Track statistics
-                    total_atoms += N0_cell;
+                    total_volume += cell_volume;
                     min_cell_vol = std::min(min_cell_vol, cell_volume);
                     max_cell_vol = std::max(max_cell_vol, cell_volume);
                 }
             }
         }
 
+        // Compute equivalent total atom count for reference
+        real total_atoms = N0_density * total_volume;
+        real inversion_density = (2.0 * inversion_fraction - 1.0) * N0_density;  // [m^-3]
+        real integrated_inversion = inversion_density * total_volume;
+
         // Print initialization summary
         size_t n_cells = (i1 - i0) * (j1 - j0) * (k1 - k0);
-        std::cout << "\n[TLS Init] Gain region initialized:\n";
+        std::cout << "\n[TLS Init] Gain region initialized (DENSITY FORMULATION):\n";
         std::cout << "  N0_density = " << N0_density << " atoms/m³\n";
+        std::cout << "  Gain region volume V_total = " << total_volume * 1e18 << " μm³\n";
+        std::cout << "  Equivalent total atoms N = " << total_atoms << "\n";
         std::cout << "  Cell volume range: " << min_cell_vol * 1e27 << " - "
                   << max_cell_vol * 1e27 << " nm³\n";
-        std::cout << "  Atoms per cell range: " << N0_density * min_cell_vol
-                  << " - " << N0_density * max_cell_vol << "\n";
-        std::cout << "  Total atoms in gain region: " << total_atoms << "\n";
         std::cout << "  Number of cells: " << n_cells << "\n";
         std::cout << "  Initial inversion fraction: " << inversion_fraction << "\n";
-        std::cout << "  Total initial inversion (Nu-Ng): "
-                  << total_atoms * (2.0 * inversion_fraction - 1.0) << "\n\n";
+        std::cout << "  Inversion density (Nu-Ng): " << inversion_density << " m^-3\n";
+        std::cout << "  Integrated inversion: " << integrated_inversion << " atoms\n\n";
     }
 };
 
@@ -323,8 +325,8 @@ inline void update_polarization(
             for (int k = 0; k < (int)NzT; ++k) {
                 size_t id = idx3((size_t)i, (size_t)j, (size_t)k, NyT, NzT);
 
-                // Skip if no dipoles here
-                if (state.Ndip[id] < 1e-20) continue;  // Skip only truly empty cells
+                // Skip if no dipoles here (Ndip is now density [m^-3])
+                if (state.Ndip[id] <= 0) continue;  // Skip cells with no gain medium
 
                 // Calculate population inversion term: (Ng - Nu) / Ng0
                 // Positive when more atoms in ground state (absorption)
@@ -397,27 +399,30 @@ inline void update_populations(
             for (int k = 0; k < (int)NzT; ++k) {
                 size_t id = idx3((size_t)i, (size_t)j, (size_t)k, NyT, NzT);
 
-                // Skip if no dipoles here
-                if (state.Ndip[id] < 1e-20) continue;  // Skip only truly empty cells
+                // Skip if no dipoles here (Ndip is now density [m^-3])
+                if (state.Ndip[id] <= 0) continue;  // Skip cells with no gain medium
 
                 real Nu_curr = state.Nu[id];
-                real Ntotal = state.Ng0[id];  // Total density (conserved)
+                real Ntotal = state.Ng0[id];  // Total density [m^-3] (conserved)
 
-                if (Ntotal < 1e-20) continue;  // Skip only truly empty cells
+                if (Ntotal <= 0) continue;  // Skip cells with no atoms
 
-                // FIX #4: Stimulated term using energy-conserving RATE form
-                // stim_rate = E_avg · (dP/dt) / (ℏωa)  [units: 1/(m³·s)]
-                // E_avg = 0.5 * (Ez_new + Ez_old)
-                // dP/dt = ΔP/dt where ΔP = Pz_new - Pz_old
+                // Stimulated term using energy-conserving RATE form
+                // stim_rate = E_avg · (dP/dt) / (ℏωa)  [units: m^-3 s^-1]
+                // E_avg = 0.5 * (Ez_new + Ez_old)   [V/m]
+                // dP/dt = ΔP/dt where ΔP = Pz_new - Pz_old  [C/(m²·s)]
                 //
-                // CRITICAL FIX (Issue A): The stimulated term must be in RATE form
-                // Previous code used: stim = E_avg * ΔP / (ℏω) which has units 1/m³ (not rate!)
-                // Then multiplied by dt again, causing dimension error (factor of dt² instead of dt)
-                // Correct: stim_rate = E_avg * (ΔP/dt) / (ℏω) has units 1/(m³·s)
+                // Dimensional analysis:
+                //   E·(dP/dt)/(ℏω) = [V/m]·[C/(m²·s)]/[J·s·s^-1]
+                //                  = [J/(m³·s)]/[J] = [m^-3 s^-1] ✓
+                //
+                // Sign convention:
+                //   stim_rate > 0: field does positive work → ABSORPTION → Nu increases
+                //   stim_rate < 0: field does negative work → STIMULATED EMISSION → Nu decreases
                 real E_avg = 0.5 * (Ez[id] + state.Ez_old[id]);
                 real delta_P = state.Pz[id] - state.Pz_prev[id];
-                real dP_dt = delta_P * inv_dt;  // Convert to rate [C/(m²·s)] - uses pre-computed 1/dt
-                real stim_rate = E_avg * dP_dt * inv_hbar_omega;  // [1/(m³·s)]
+                real dP_dt = delta_P * inv_dt;  // [C/(m²·s)]
+                real stim_rate = E_avg * dP_dt * inv_hbar_omega;  // [m^-3 s^-1]
 
                 // FIX #3: Simple linear spontaneous decay: -Nu/τ
                 // (Original code had -Nu·(1-Ng/Ng0)/τ = -Nu²/(τ·Ng0), which was WRONG)
@@ -533,40 +538,90 @@ inline void fdtd_update_E_with_gain(
 }
 
 // ========== Diagnostic Functions ==========
+// VOLUME DENSITY FORMULATION: All population quantities are densities [m^-3]
+// To get physically meaningful totals, must integrate with cell volume dV
 
-// Calculate total population in upper state (Nu)
-inline real compute_total_Nu(const TwoLevelState& state) {
+// Calculate integrated total population in upper state: ∫ Nu dV [atoms]
+inline real compute_integrated_Nu(const TwoLevelState& state, const GridSpacing& grid) {
     real total_Nu = 0.0;
-    for (size_t i = 0; i < state.Nu.size(); ++i) {
-        if (state.Ndip[i] > 1e-20) {
-            total_Nu += state.Nu[i];
+    const size_t NyT = state.NyT;
+    const size_t NzT = state.NzT;
+
+    for (size_t i = 0; i < state.NxT; ++i) {
+        for (size_t j = 0; j < state.NyT; ++j) {
+            for (size_t k = 0; k < state.NzT; ++k) {
+                size_t id = idx3(i, j, k, NyT, NzT);
+                if (state.Ndip[id] <= 0) continue;
+
+                real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
+                total_Nu += state.Nu[id] * dV;
+            }
         }
     }
     return total_Nu;
 }
 
-// Calculate total population in ground state (Ng)
-inline real compute_total_Ng(const TwoLevelState& state) {
+// Calculate integrated total population in ground state: ∫ Ng dV [atoms]
+inline real compute_integrated_Ng(const TwoLevelState& state, const GridSpacing& grid) {
     real total_Ng = 0.0;
-    for (size_t i = 0; i < state.Ng.size(); ++i) {
-        if (state.Ndip[i] > 1e-20) {
-            total_Ng += state.Ng[i];
+    const size_t NyT = state.NyT;
+    const size_t NzT = state.NzT;
+
+    for (size_t i = 0; i < state.NxT; ++i) {
+        for (size_t j = 0; j < state.NyT; ++j) {
+            for (size_t k = 0; k < state.NzT; ++k) {
+                size_t id = idx3(i, j, k, NyT, NzT);
+                if (state.Ndip[id] <= 0) continue;
+
+                real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
+                total_Ng += state.Ng[id] * dV;
+            }
         }
     }
     return total_Ng;
 }
 
-// Calculate total population inversion in gain region
-inline real compute_total_inversion(const TwoLevelState& state) {
+// Calculate integrated population inversion: ∫ (Nu - Ng) dV [atoms]
+inline real compute_integrated_inversion(const TwoLevelState& state, const GridSpacing& grid) {
     real total_inversion = 0.0;
-    for (size_t i = 0; i < state.Nu.size(); ++i) {
-        // Skip truly empty cells (threshold should be much smaller than atoms per cell)
-        // Typical atoms per cell: 0.1 - 1.0, so use 1e-20 as threshold
-        if (state.Ndip[i] > 1e-20) {
-            total_inversion += (state.Nu[i] - state.Ng[i]);
+    const size_t NyT = state.NyT;
+    const size_t NzT = state.NzT;
+
+    for (size_t i = 0; i < state.NxT; ++i) {
+        for (size_t j = 0; j < state.NyT; ++j) {
+            for (size_t k = 0; k < state.NzT; ++k) {
+                size_t id = idx3(i, j, k, NyT, NzT);
+                if (state.Ndip[id] <= 0) continue;
+
+                real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
+                total_inversion += (state.Nu[id] - state.Ng[id]) * dV;
+            }
         }
     }
     return total_inversion;
+}
+
+// Compute average inversion density in gain region: (∫(Nu-Ng)dV) / (∫dV) [m^-3]
+inline real compute_avg_inversion_density(const TwoLevelState& state, const GridSpacing& grid) {
+    real total_inversion = 0.0;
+    real total_volume = 0.0;
+    const size_t NyT = state.NyT;
+    const size_t NzT = state.NzT;
+
+    for (size_t i = 0; i < state.NxT; ++i) {
+        for (size_t j = 0; j < state.NyT; ++j) {
+            for (size_t k = 0; k < state.NzT; ++k) {
+                size_t id = idx3(i, j, k, NyT, NzT);
+                if (state.Ndip[id] <= 0) continue;
+
+                real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
+                total_inversion += (state.Nu[id] - state.Ng[id]) * dV;
+                total_volume += dV;
+            }
+        }
+    }
+
+    return (total_volume > 0) ? total_inversion / total_volume : 0.0;
 }
 
 // Calculate total stored energy in polarization
@@ -588,7 +643,7 @@ inline real compute_polarization_energy(
             for (size_t k = 0; k < state.NzT; ++k) {
                 size_t id = idx3(i, j, k, NyT, NzT);
 
-                if (state.Ndip[id] < 1e-20) continue;  // Skip only truly empty cells
+                if (state.Ndip[id] <= 0) continue;  // Skip cells with no gain medium
 
                 real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
 
