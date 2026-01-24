@@ -190,8 +190,9 @@ struct PopulationSlice2D {
 };
 
 // ======================= Polarization diagnostics =======================
-// ENERGY FORMULA FIX: Uses field-medium interaction energy 0.5 * Pz * Ez * dV
-// This is consistent with compute_polarization_energy() in two_level_system.hpp
+// ENERGY FORMULA: Uses dipole interaction energy u_int = -P·E
+// Specifically: total_P_energy = -0.5 * ∫ Pz*Ez dV
+// Consistent with compute_polarization_energy() in two_level_system.hpp
 struct PolarizationDiagnostics {
     fs::path det_dir;
     fs::path csv_path;
@@ -222,7 +223,7 @@ struct PolarizationDiagnostics {
         f_csv.open(csv_path, std::ios::out);
 
         if (f_csv) {
-            // total_P_energy is now: 0.5 * ∫ Pz*Ez dV (interaction energy proxy)
+            // total_P_energy: -0.5 * ∫ Pz*Ez dV (dipole interaction energy u_int = -P·E)
             f_csv << "t, Pz_center, dPz_dt_center, total_P_energy\n";
         }
 
@@ -239,8 +240,9 @@ struct PolarizationDiagnostics {
         real Pz_center = state.Pz[id_mon];
         real dPz_dt_center = state.dPz_dt[id_mon];
 
-        // Calculate total polarization-field interaction energy: 0.5 * ∫ Pz*Ez dV
-        // This is consistent with compute_polarization_energy() in two_level_system.hpp
+        // Calculate dipole-field interaction energy: U_int = -0.5 * ∫ Pz*Ez dV
+        // Consistent with compute_polarization_energy() in two_level_system.hpp
+        // Physical: u_int = -P·E (dipole interaction energy)
         // Units: [C/m²] * [V/m] * [m³] = [J] (energy)
         double P_energy = 0.0;
         for (size_t i = 0; i < NxT; ++i) {
@@ -250,7 +252,7 @@ struct PolarizationDiagnostics {
                     if (state.Ndip[id] <= 0) continue;  // Skip cells with no gain medium
 
                     real dV = grid.dx[i] * grid.dy[j] * grid.dz[k];
-                    P_energy += 0.5 * state.Pz[id] * Ez[id] * dV;
+                    P_energy += -0.5 * state.Pz[id] * Ez[id] * dV;
                 }
             }
         }
