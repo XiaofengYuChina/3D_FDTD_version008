@@ -389,7 +389,7 @@ int main() {
             if (can_record) {
                 if (pop_detector) pop_detector->record(n, tls_state);
                 if (gain_monitor) gain_monitor->record(n, tls_state);
-                if (pol_diagnostics) pol_diagnostics->record(n, tls_state, ctx.grid_spacing);
+                if (pol_diagnostics) pol_diagnostics->record(n, tls_state, Ez, ctx.grid_spacing);
                 if (tls_global_history) tls_global_history->record(n, tls_state);
             }
         }
