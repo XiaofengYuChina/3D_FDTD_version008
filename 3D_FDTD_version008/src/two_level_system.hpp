@@ -16,19 +16,20 @@ struct StructureTLSConfig;
 
 // ========== Two-Level System Parameters ==========
 struct TwoLevelParams {
-    // Atomic transition parameters (defaults from UserConfig::TLS_DEFAULT_PARAMS)
-    real lambda0 = UserConfig::TLS_DEFAULT_PARAMS.lambda0;     // Transition wavelength (m)
-    real omega_a = 0.0;                         // Angular frequency ωa = 2πc/λ₀ (rad/s)
+    // Atomic transition parameters
+    // These will be set from TLS_MATERIALS, defaults are just placeholders
+    real lambda0 = 1500e-9;     // Transition wavelength (m)
+    real omega_a = 0.0;         // Angular frequency ωa = 2πc/λ₀ (rad/s)
 
-    // Decay and damping (defaults from UserConfig::TLS_DEFAULT_PARAMS)
-    real gamma = UserConfig::TLS_DEFAULT_PARAMS.gamma;     // Polarization damping rate γ (s⁻¹)
-    real tau = UserConfig::TLS_DEFAULT_PARAMS.tau;         // Upper level lifetime τ (s)
+    // Decay and damping
+    real gamma = 7e12;          // Polarization damping rate γ (s⁻¹)
+    real tau = 1e-12;           // Upper level lifetime τ (s)
 
     // Transition dipole moment (calculated from Einstein A coefficient)
-    real mu_z = 0.0;                        // |μz| = √(3πε₀ℏc³/(ωa³τ))
+    real mu_z = 0.0;            // |μz| = √(3πε₀ℏc³/(ωa³τ))
 
-    // Spatial distribution of dipoles (default from UserConfig::TLS_DEFAULT_PARAMS)
-    real N0_total = UserConfig::TLS_DEFAULT_PARAMS.N0;   // Total dipole density (m⁻³)
+    // Spatial distribution of dipoles
+    real N0_total = 1e25;       // Total dipole density (m⁻³)
 
     // Physical constants (stored for use in stimulated term calculation)
     real hbar = PhysConst::HBAR;            // Reduced Planck constant (J·s)

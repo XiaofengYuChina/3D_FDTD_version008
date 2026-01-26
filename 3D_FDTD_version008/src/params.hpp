@@ -757,7 +757,7 @@ namespace Config {
 
     // ===== ADD STRUCTURES TO SCENE (after mesh is generated) =====
     // Structures are read from UserConfig::STRUCTURES
-    // Each structure can optionally have TLS bound to it
+    // TLS is looked up by name from UserConfig::TLS_MATERIALS
     inline void register_default_structures() {
         g_structure_pkgs.push_back([](StructureScene& scene) {
 
@@ -775,26 +775,21 @@ namespace Config {
             for (const auto& s : UserConfig::STRUCTURES) {
                 Material mat = make_nk(s.n);
 
-                // Build TLS config if enabled for this structure
+                // Look up TLS material by name
                 StructureTLSConfig tls_cfg;
-                if (s.has_tls && UserConfig::TLS_ENABLED) {
+                const auto* tls_mat = UserConfig::find_tls_material(s.tls_material);
+                if (tls_mat && UserConfig::TLS_ENABLED) {
                     tls_cfg.enabled = true;
-                    if (s.use_default_tls_params) {
-                        // Use default TLS parameters
-                        tls_cfg.lambda0 = UserConfig::TLS_DEFAULT_PARAMS.lambda0;
-                        tls_cfg.gamma = UserConfig::TLS_DEFAULT_PARAMS.gamma;
-                        tls_cfg.tau = UserConfig::TLS_DEFAULT_PARAMS.tau;
-                        tls_cfg.N0 = UserConfig::TLS_DEFAULT_PARAMS.N0;
-                        tls_cfg.inversion_fraction = UserConfig::TLS_DEFAULT_PARAMS.inversion_fraction;
-                    } else {
-                        // Use structure-specific TLS parameters
-                        tls_cfg.lambda0 = s.tls.lambda0;
-                        tls_cfg.gamma = s.tls.gamma;
-                        tls_cfg.tau = s.tls.tau;
-                        tls_cfg.N0 = s.tls.N0;
-                        tls_cfg.inversion_fraction = s.tls.inversion_fraction;
-                    }
+                    tls_cfg.lambda0 = tls_mat->lambda0;
+                    tls_cfg.gamma = tls_mat->gamma;
+                    tls_cfg.tau = tls_mat->tau;
+                    tls_cfg.N0 = tls_mat->N0;
+                    tls_cfg.inversion_fraction = tls_mat->inversion_fraction;
                     tls_count++;
+                    std::cout << "[Structure] Using TLS material \"" << tls_mat->name << "\"\n";
+                } else if (!s.tls_material.empty() && !tls_mat) {
+                    std::cerr << "[WARNING] TLS material \"" << s.tls_material
+                              << "\" not found in TLS_MATERIALS!\n";
                 }
 
                 if (s.type == "box") {

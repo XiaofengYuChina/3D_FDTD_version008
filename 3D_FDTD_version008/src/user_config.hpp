@@ -257,16 +257,14 @@ constexpr double PROBE_Z = 500e-9;      // Probe z position (m)
 //                         6. TWO-LEVEL SYSTEM (GAIN MEDIUM) CONFIGURATION
 // ============================================================================
 //
-// Two-Level System (TLS) is now BOUND TO STRUCTURES!
-// Each structure can optionally have its own TLS with independent parameters.
-// The TLS gain region automatically matches the structure's geometry.
+// TLS Material Library System:
+// 1. Define named TLS materials in TLS_MATERIALS below
+// 2. Reference them by name in STRUCTURES using tls_material field
 //
-// To add TLS to a structure:
-// 1. Set has_tls = true in StructureDef
-// 2. Fill in the tls field with TLS parameters
-//
-// The global TLS_ENABLED flag below enables/disables ALL structure-bound TLS.
-// Individual structures can be enabled/disabled via has_tls field.
+// Example:
+//   TLS_MATERIALS: {"my_gain", 1500e-9, 7e12, 1e-12, 1e25, 1.0}
+//   STRUCTURES: {"box", 3.0, {...}, "my_gain"}   // has TLS
+//               {"box", 4.0, {...}, ""}          // no TLS (empty string)
 
 // Global enable for two-level system (master switch)
 // If false, ALL TLS will be disabled regardless of per-structure settings
@@ -275,9 +273,10 @@ constexpr bool TLS_ENABLED = true;
 // Enable population clamping (optional, for debugging)
 constexpr bool TLS_ENABLE_CLAMP = false;
 
-// -------------------- TLS Parameters Definition --------------------
-// These parameters define the atomic/molecular properties of the gain medium
-struct TLSParamsDef {
+// -------------------- TLS Material Definition --------------------
+// Each TLS material has a unique name and associated parameters
+struct TLSMaterialDef {
+    std::string name;           // Unique name to reference this TLS material
     double lambda0;             // Transition wavelength (m)
     double gamma;               // Polarization damping rate (1/s)
     double tau;                 // Upper level lifetime (s)
@@ -288,15 +287,27 @@ struct TLSParamsDef {
                                 // 1.0 = full inversion (all atoms in upper state)
 };
 
-// Default TLS parameters (used when structure doesn't specify custom values)
-// These are reasonable defaults for a typical gain medium
-constexpr TLSParamsDef TLS_DEFAULT_PARAMS = {
-    1500e-9,    // lambda0: 1500 nm transition wavelength
-    7e12,       // gamma: polarization damping rate
-    1e-12,      // tau: 1 ps upper level lifetime
-    1e25,       // N0: dipole density
-    1.0         // inversion_fraction: full inversion
+// -------------------- TLS Material Library --------------------
+// Define all your TLS materials here with unique names.
+// Then reference them by name in STRUCTURES using the tls_material field.
+//
+// Format: {name, lambda0, gamma, tau, N0, inversion_fraction}
+//
+inline const std::vector<TLSMaterialDef> TLS_MATERIALS = {
+    {"gain_1500nm", 1500e-9, 7e12, 1e-12, 1e25, 1.0},
+    // Add more TLS materials as needed:
+    // {"gain_1300nm", 1300e-9, 5e12, 2e-12, 5e24, 0.8},
+    // {"weak_gain",   1550e-9, 1e13, 5e-12, 1e24, 0.6},
 };
+
+// Helper function to find TLS material by name (returns nullptr if not found)
+inline const TLSMaterialDef* find_tls_material(const std::string& name) {
+    if (name.empty()) return nullptr;
+    for (const auto& mat : TLS_MATERIALS) {
+        if (mat.name == name) return &mat;
+    }
+    return nullptr;
+}
 
 
 // ============================================================================
@@ -344,15 +355,9 @@ struct StructureDef {
     double params[6];
 
     // ===== Two-Level System (TLS) binding =====
-    // If has_tls is true, this structure will have a gain medium with TLS
-    // The TLS region automatically matches the structure geometry
-    bool has_tls = false;       // Enable TLS for this structure
-
-    // TLS parameters for this structure
-    // Only used if has_tls is true
-    // If use_default_tls_params is true, TLS_DEFAULT_PARAMS will be used
-    bool use_default_tls_params = true;
-    TLSParamsDef tls = TLS_DEFAULT_PARAMS;
+    // Set to a TLS material name defined in TLS_MATERIALS to add gain medium
+    // Leave empty ("") for pure dielectric (no TLS)
+    std::string tls_material = "";
 };
 
 // Define structures here
@@ -361,38 +366,25 @@ struct StructureDef {
 //
 // Example configurations:
 
-// Configuration 1: Center cube + cylinder (default demo)
-// NEW: Each structure can now have TLS bound to it!
-//
 // Structure definition format:
-//   {type, n, {params...}, has_tls, use_default_tls_params, {tls_params}}
+//   {type, n, {params...}, tls_material}
+//
+// tls_material: Name of TLS material from TLS_MATERIALS, or "" for no TLS
 //
 // Examples:
-//   {"box", 2.0, {...}, false}                    // Dielectric only, no TLS
-//   {"box", 2.0, {...}, true}                     // With TLS using default params
-//   {"box", 2.0, {...}, true, false, {lambda0, gamma, tau, N0, inv_frac}}  // Custom TLS
+//   {"box", 2.0, {...}, ""}              // Pure dielectric, no TLS
+//   {"box", 3.0, {...}, "gain_1500nm"}   // With TLS using "gain_1500nm" material
 //
 inline const std::vector<StructureDef> STRUCTURES = {
-    // Structure 1: Cylinder with TLS (gain medium)
-    // This cylinder has TLS bound to it - the gain region matches the cylinder geometry
+    // Cylinder with TLS (gain medium) - references "gain_1500nm" from TLS_MATERIALS
     // params = {cx, cy, radius, z0, z1, 0}
-    {"cylinder", 3.3, {2000e-9, 2000e-9, 1000e-9, 400e-9, 600e-9, 0},
-     true,   // has_tls = true: enable TLS for this structure
-     true,   // use_default_tls_params = true: use TLS_DEFAULT_PARAMS
-     TLS_DEFAULT_PARAMS  // tls params (ignored when use_default_tls_params = true)
-    },
+    {"cylinder", 3.3, {2000e-9, 2000e-9, 1000e-9, 400e-9, 600e-9, 0}, "gain_1500nm"},
 
-    // Example: Box WITHOUT TLS (pure dielectric)
-    // {"box", 4.0, {900e-9, 1100e-9, 900e-9, 1100e-9, 400e-9, 600e-9},
-    //  false  // has_tls = false: no TLS, just dielectric
-    // },
+    // Example: Box WITHOUT TLS (pure dielectric) - empty string means no TLS
+    // {"box", 4.0, {900e-9, 1100e-9, 900e-9, 1100e-9, 400e-9, 600e-9}, ""},
 
-    // Example: Box WITH custom TLS parameters
-    // {"box", 3.0, {1200e-9, 1400e-9, 1200e-9, 1400e-9, 400e-9, 600e-9},
-    //  true,  // has_tls = true
-    //  false, // use_default_tls_params = false: use custom parameters below
-    //  {1300e-9, 5e12, 2e-12, 5e24, 0.8}  // {lambda0, gamma, tau, N0, inversion}
-    // },
+    // Example: Multiple structures with different TLS materials
+    // {"box", 3.0, {100e-9, 300e-9, 100e-9, 300e-9, 400e-9, 600e-9}, "gain_1300nm"},
 };
 
 // Background material refractive index (default: air, n=1)
