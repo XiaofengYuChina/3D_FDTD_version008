@@ -463,8 +463,4 @@ constexpr int PARALLEL_DECOMP_AXIS = 0;
 // 1 is sufficient for standard FDTD (nearest-neighbor stencil)
 constexpr int PARALLEL_HALO_WIDTH = 1;
 
-
 } // namespace UserConfig
-
-
-

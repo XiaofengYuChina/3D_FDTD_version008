@@ -47,10 +47,7 @@ struct TwoLevelParams {
     real inv_dt = 0.0;              // Pre-computed 1/dt (OPTIMIZATION: avoid divisions in loops)
     bool coefficients_initialized = false;
 
-    // FIX #2: Az_value() now returns 0 (low-intensity approximation)
-    // In low-intensity regime, the A² term in the polarization equation is negligible.
-    // The original code incorrectly used mu_z (dipole moment) instead of vector potential.
-    // Reference: oe-14-8-3569.pdf - at low intensity, omega_eff² ≈ omega_a²
+    // Low-intensity approximation: A² term negligible, omega_eff² ≈ omega_a²
     real Az_value() const { return 0.0; }
 
     // Initialize basic derived quantities (without dt)
@@ -109,14 +106,8 @@ struct TwoLevelParams {
         // Denominator: β = 2 + γ·dt
         const real beta = 2.0 + gamma * dt;
 
-        // Three-point recursion coefficients for damped harmonic oscillator:
-        // d²P/dt² + γ·dP/dt + ω²·P = F
-        // Using central difference discretization:
-        // (P^{n+1} - 2P^n + P^{n-1})/dt² + γ·(P^{n+1} - P^{n-1})/(2dt) + ω²·P^n = F^n
-        // Rearranging:
-        // P^{n+1}·(1 + γ·dt/2) = F^n·dt² + P^n·(2 - ω²·dt²) + P^{n-1}·(γ·dt/2 - 1)
-        // Multiply through by 2:
-        // P^{n+1}·(2 + γ·dt) = 2·F^n·dt² + P^n·2·(2 - ω²·dt²) + P^{n-1}·(γ·dt - 2)
+        // Three-point recursion: d²P/dt² + γ·dP/dt + ω²·P = F
+        // Central difference → P^{n+1}·(2+γdt) = 2·F·dt² + P^n·2(2-ω²dt²) + P^{n-1}·(γdt-2)
 
         // Driving coefficient: 2·dt²/β × (2ω/ℏ)|μ|²
         // Note: Full driving term = kapa_coeff × Ndip × (Ng-Nu)/Ng0 × Ez
@@ -204,15 +195,8 @@ struct TwoLevelState {
         Ndip.assign(N, 0.0);
     }
     
-    // Initialize: set up gain region with population inversion
-    // CRITICAL FIX (Issue C): Use half-open interval [i0, i1) to avoid off-by-one
-    // Previous: for (i = i0; i <= i1) gave size = (i1-i0+1), one extra cell
-    // Now: for (i = i0; i < i1) gives size = (i1-i0), exactly as specified
-    //
-    // VOLUME DENSITY FORMULATION:
-    // All population quantities (Ndip, Nu, Ng, Ng0) are now VOLUME DENSITIES [m^-3]
-    // This ensures grid-independent physics: changing resolution (dx,dy,dz) does NOT
-    // change macroscopic behavior (gain, threshold, etc.)
+    // Initialize gain region with population inversion
+    // Uses half-open interval [i0, i1) and volume density formulation [m^-3]
     void initialize_gain_region(
         size_t i0, size_t i1,   // Half-open interval [i0, i1)
         size_t j0, size_t j1,   // Half-open interval [j0, j1)
@@ -246,13 +230,11 @@ struct TwoLevelState {
                 for (size_t k = k0; k < k1; ++k) { // Half-open: [k0, k1)
                     size_t id = idx3(i, j, k, NyT, NzT);
 
-                    // VOLUME DENSITY FORMULATION:
-                    // Ndip, Nu, Ng, Ng0 are all densities [m^-3], NOT atoms per cell
-                    // This makes the physics grid-independent
-                    Ndip[id] = N0_density;                          // [m^-3]
-                    Nu[id]   = inversion_fraction * N0_density;     // [m^-3]
-                    Ng[id]   = (1.0 - inversion_fraction) * N0_density;  // [m^-3]
-                    Ng0[id]  = N0_density;  // Total density (conserved) [m^-3]
+                    // Volume density formulation [m^-3]
+                    Ndip[id] = N0_density;
+                    Nu[id]   = inversion_fraction * N0_density;
+                    Ng[id]   = (1.0 - inversion_fraction) * N0_density;
+                    Ng0[id]  = N0_density;
 
                     // Track volume statistics
                     real cell_volume = grid.dx[i] * grid.dy[j] * grid.dz[k];
@@ -285,24 +267,9 @@ struct TwoLevelState {
 
 // ========== Update Functions ==========
 
-// Update polarization using THREE-POINT RECURSION (higher accuracy than Verlet)
-//
-// Physics: Damped harmonic oscillator ODE
+// Update polarization using three-point recursion for damped harmonic oscillator
 // d²Pz/dt² + γ·dPz/dt + ωa²·Pz = (2ωa/ℏ)·|μz|²·Ndip·[(Ng-Nu)/Ng⁰]·Ez
-//
-// Discretization using central difference (Reference: Shijie_fdtd2dmetal4level_new.f90):
-// (P^{n+1} - 2P^n + P^{n-1})/dt² + γ·(P^{n+1} - P^{n-1})/(2dt) + ω²·P^n = F^n
-//
-// Rearranging to explicit form:
-// P^{n+1} = kapa·F^n + pa2·P^n + pa3·P^{n-1}
-//
-// where:
-//   kapa = 2·dt²/(2+γ·dt) × driving_coefficient
-//   pa2 = 2·(2-ω²·dt²)/(2+γ·dt)
-//   pa3 = (γ·dt-2)/(2+γ·dt)
-//
-// This three-point recursion is more accurate than Verlet for damped oscillators
-// because it exactly captures the damping term without first-order error.
+// Discretized: P^{n+1} = kapa·F + pa2·P^n + pa3·P^{n-1}
 
 inline void update_polarization(
     size_t NxT, size_t NyT, size_t NzT,
@@ -361,25 +328,9 @@ inline void update_polarization(
     }
 }
 
-// Update population densities using CORRECTED two-level rate equations:
-//
-// Rate equations (VOLUME DENSITY FORMULATION, all quantities in m^-3):
-//   stim_rate = E_avg · (dP/dt) / (ℏωa)   [m^-3 s^-1]
-//   dNu/dt = -Nu/τ + stim_rate
-//   dNg/dt = +Nu/τ - stim_rate
-//
-// where:
-//   E_avg = 0.5 * (Ez_new + Ez_old)   [V/m, time-centered field]
-//   dP/dt = (Pz_new - Pz_old) / dt    [C/(m²·s)]
-//
-// Sign convention:
-//   stim_rate > 0: field does positive work → ABSORPTION → Nu increases
-//   stim_rate < 0: field does negative work → STIMULATED EMISSION → Nu decreases
-//
-// Conservation properties:
-//   1. Nu + Ng = Ntotal is conserved (no external pumping/losses)
-//   2. Energy conservation: field energy change = -ℏωa × population change
-//   3. Positive inversion (Nu > Ng) causes amplification
+// Update population densities using two-level rate equations (volume density formulation)
+// stim_rate = E_avg·(dP/dt)/(ℏωa), dNu/dt = -Nu/τ + stim_rate, dNg/dt = +Nu/τ - stim_rate
+// stim_rate > 0 → absorption, stim_rate < 0 → stimulated emission
 
 inline void update_populations(
     size_t NxT, size_t NyT, size_t NzT,
@@ -413,31 +364,13 @@ inline void update_populations(
 
                 if (Ntotal <= 0) continue;  // Skip cells with no atoms
 
-                // Stimulated term using energy-conserving RATE form
-                // stim_rate = E_avg · (dP/dt) / (ℏωa)  [units: m^-3 s^-1]
-                // E_avg = 0.5 * (Ez_new + Ez_old)   [V/m]
-                // dP/dt = ΔP/dt where ΔP = Pz_new - Pz_old  [C/(m²·s)]
-                //
-                // Dimensional analysis:
-                //   E·(dP/dt)/(ℏω) = [V/m]·[C/(m²·s)]/[J·s·s^-1]
-                //                  = [J/(m³·s)]/[J] = [m^-3 s^-1] ✓
-                //
-                // Sign convention:
-                //   stim_rate > 0: field does positive work → ABSORPTION → Nu increases
-                //   stim_rate < 0: field does negative work → STIMULATED EMISSION → Nu decreases
+                // Stimulated rate: stim_rate = E_avg·(dP/dt)/(ℏωa)
                 real E_avg = 0.5 * (Ez[id] + state.Ez_old[id]);
                 real delta_P = state.Pz[id] - state.Pz_prev[id];
-                real dP_dt = delta_P * inv_dt;  // [C/(m²·s)]
-                real stim_rate = E_avg * dP_dt * inv_hbar_omega;  // [m^-3 s^-1]
+                real dP_dt = delta_P * inv_dt;
+                real stim_rate = E_avg * dP_dt * inv_hbar_omega;
 
-                // FIX #3: Simple linear spontaneous decay: -Nu/τ
-                // (Original code had -Nu·(1-Ng/Ng0)/τ = -Nu²/(τ·Ng0), which was WRONG)
-                //
-                // FIX #5: Stimulated term sign correction
-                // Physical meaning of stim_rate = E·(dP/dt)/(ℏω):
-                //   - stim_rate > 0: field does positive work on medium → ABSORPTION → Nu increases
-                //   - stim_rate < 0: field does negative work on medium → STIMULATED EMISSION → Nu decreases
-                // Therefore: dNu/dt = -Nu/τ + stim_rate (NOT minus!)
+                // Rate equations: dNu/dt = -Nu/τ + stim_rate
                 real dNu_dt = -inv_tau * Nu_curr + stim_rate;
                 real dNg_dt = +inv_tau * Nu_curr - stim_rate;
 
@@ -466,22 +399,7 @@ inline void update_populations(
     }
 }
 
-// Modified E-field update to include polarization source term:
-// ∂E/∂t = (1/ε₀n²)[∇×H - ∂P/∂t - J]
-//
-// FIX #1: Polarization source term sign correction
-// The Maxwell-Ampere equation requires: Ez += bEz * (curlHz - Jz - dPz_dt)
-// The "-dPz_dt" term represents energy transfer between field and medium.
-//
-// Original INCORRECT code:
-//   Pz_source = -dPz_dt;
-//   Ez = ... - Pz_source;  // This gave +dPz_dt (WRONG)
-//
-// CORRECT code:
-//   Pz_source = dPz_dt;
-//   Ez = ... - Pz_source;  // This gives -dPz_dt (CORRECT)
-//
-// Reference: oe-14-8-3569.pdf, Eq. for Maxwell-Ampere law
+// E-field update with polarization source: ∂E/∂t = (1/ε₀n²)[∇×H - ∂P/∂t - J]
 
 template<typename Real>
 inline void fdtd_update_E_with_gain(
@@ -532,11 +450,8 @@ inline void fdtd_update_E_with_gain(
                 // Store Ez_old BEFORE updating Ez (for next step's stim calculation)
                 state.Ez_old[id] = Ez[id];
 
-                // FIX #1: Polarization source term with CORRECT sign
-                // The term is -∂P/∂t in Maxwell-Ampere equation
-                // dPz_dt holds the positive value of ∂Pz/∂t
-                // So we need to SUBTRACT it: Ez += bEz*(curlHz - Jz - dPz_dt)
-                Real Pz_source = state.dPz_dt[id];  // This is +dP/dt
+                // Polarization source: -∂P/∂t in Maxwell-Ampere equation
+                Real Pz_source = state.dPz_dt[id];
                 Ez[id] = aEz[id] * Ez[id] + bEz[id] * (curlHz - Jz[id] - Pz_source);
             }
         }
@@ -544,8 +459,6 @@ inline void fdtd_update_E_with_gain(
 }
 
 // ========== Diagnostic Functions ==========
-// VOLUME DENSITY FORMULATION: All population quantities are densities [m^-3]
-// To get physically meaningful totals, must integrate with cell volume dV
 
 // Calculate integrated total population in upper state: ∫ Nu dV [atoms]
 inline real compute_integrated_Nu(const TwoLevelState& state, const GridSpacing& grid) {
@@ -630,15 +543,7 @@ inline real compute_avg_inversion_density(const TwoLevelState& state, const Grid
     return (total_volume > 0) ? total_inversion / total_volume : 0.0;
 }
 
-// Calculate dipole-field interaction energy: U_int = -∫ P·E dV
-// For z-polarized case: U_int = -∫ Pz·Ez dV
-// We use 0.5 factor for time-averaged energy: u_int = -0.5 * Pz * Ez
-//
-// Physical interpretation:
-//   u_int < 0 when P and E are aligned → stable configuration
-//   u_int > 0 when P and E are anti-aligned → unstable
-//
-// CRITICAL FIX: The sign must be NEGATIVE (dipole interaction u_int = -P·E)
+// Calculate dipole-field interaction energy: U_int = -∫ P·E dV (time-averaged)
 inline real compute_polarization_energy(
     const TwoLevelState& state,
     const std::vector<real>& Ez,
@@ -667,16 +572,9 @@ inline real compute_polarization_energy(
     return total_energy;
 }
 
-// ============================================================================
-//                    MULTI-REGION TLS SUPPORT (Structure-Bound TLS)
-// ============================================================================
-//
-// This section provides support for binding TLS to structures.
-// Each structure can have its own TLS region with independent parameters.
-// The TLS regions are managed together but each maintains its own physics.
+// ========== Multi-Region TLS Support (Structure-Bound TLS) ==========
 
-// ========== Single TLS Region ==========
-// Represents a TLS region bound to a specific structure
+// Single TLS region bound to a structure
 struct TLSRegion {
     // Region identifier
     size_t region_id = 0;

@@ -121,19 +121,14 @@ struct StructureScene {
     size_t Nx_core{}, Ny_core{}, Nz_core{};     // Physical region dimensions only
     size_t npml_cells{};                        // PML thickness (cells)
 
-    // DELETED - for uniform
-    // real x0{ 0 }, y0{ 0 }, z0{ 0 };
-    // real dx{ 1 }, dy{ 1 }, dz{ 1 };
-
     GridSpacing grid_spacing;
 
     Material bg{};                              // Background material
 
     std::vector<StructureItem> items;
 
-    // —— Utilities: coordinate/index conversion —— //
-    inline std::tuple<real, real, real> cell_center(size_t i, size_t j, size_t k) const {       //MODIFIED
-        //return { x0 + (i + 0.5) * dx, y0 + (j + 0.5) * dy, z0 + (k + 0.5) * dz };     //DELETED
+    // Coordinate/index conversion
+    inline std::tuple<real, real, real> cell_center(size_t i, size_t j, size_t k) const {
         real x = 0.5 * (grid_spacing.x_bounds[i] + grid_spacing.x_bounds[i+1]);
         real y = 0.5 * (grid_spacing.y_bounds[j] + grid_spacing.y_bounds[j+1]);
         real z = 0.5 * (grid_spacing.z_bounds[k] + grid_spacing.z_bounds[k+1]);
@@ -280,10 +275,10 @@ struct StructureScene {
                 real eps_sum = 0, mu_sum = 0, sg_sum = 0, sgm_sum = 0;
                 int cnt = 0;
 
-                for_each_sub([&](real rx, real ry, real rz) {    
-                    real xs = x0 + (ux + rx * (1.0)) * dx_local;    //MODIFIED    didnt have the * (1.0) on thing?
-                    real ys = y0 + (uy + ry * (1.0)) * dy_local;    //MODIFIED
-                    real zs = z0 + (uz + rz * (1.0)) * dz_local;    //MODIFIED
+                for_each_sub([&](real rx, real ry, real rz) {
+                    real xs = x0 + (ux + rx) * dx_local;
+                    real ys = y0 + (uy + ry) * dy_local;
+                    real zs = z0 + (uz + rz) * dz_local;
                     auto m = sample_mat(xs, ys, zs);
                     eps_sum += m.eps_r * eps0_arg;
                     mu_sum += m.mu_r * mu0_arg;
@@ -306,16 +301,15 @@ struct StructureScene {
             for (size_t j = 0; j < NyT; ++j)
                 for (size_t k = 0; k < NzT; ++k) {
                     size_t id = idx3(i, j, k, NyT, NzT);
-                    //real x_cell = x0 + i * dx, y_cell = y0 + j * dy, z_cell = z0 + k * dz;    DELTED? maybe? it didnt say to delete just didnt show up
 
                     auto do_E = [&](real ux, real uy, real uz, real& aE, real& bE) {
-                        auto [eps, mu, sigma, sigm] = avg_eps_mu_sigma_at(i, j, k, ux, uy, uz);    //MODIFIED - i j k used to be x_cell y_cell z_cell
+                        auto [eps, mu, sigma, sigm] = avg_eps_mu_sigma_at(i, j, k, ux, uy, uz);
                         real c1 = sigma * dt / (2 * eps);
                         aE = (1 - c1) / (1 + c1);
                         bE = (dt / eps) / (1 + c1);
                     };
                     auto do_H = [&](real ux, real uy, real uz, real& aH, real& bH) {
-                        auto [eps, mu, sigma, sigm] = avg_eps_mu_sigma_at(i, j, k, ux, uy, uz);    //MODIFIED - i j k used to be x_cell y_cell z_cell
+                        auto [eps, mu, sigma, sigm] = avg_eps_mu_sigma_at(i, j, k, ux, uy, uz);
                         real c2 = sigm * dt / (2 * mu);
                         aH = (1 - c2) / (1 + c2);
                         bH = (dt / mu) / (1 + c2);
@@ -349,18 +343,8 @@ inline void make_n_grid_from_scene(const StructureScene& scene,
     for (size_t i = 0; i < NxT; ++i)
         for (size_t j = 0; j < NyT; ++j)
             for (size_t k = 0; k < NzT; ++k) {
-                // const real xc = scene.x0 + (i + 0.5) * scene.dx;
-                // const real yc = scene.y0 + (j + 0.5) * scene.dy;
-                // const real zc = scene.z0 + (k + 0.5) * scene.dz;
-                // CHANGED to: use cell_center helper
                 auto [xc, yc, zc] = scene.cell_center(i, j, k);
-
                 const Material m = contains_mat(xc, yc, zc);
-                const real eps_r = m.eps_r;
-                const real mu_r = m.mu_r;  // Usually 1
-                n_grid[idx3(i, j, k, NyT, NzT)] = std::sqrt(eps_r * mu_r);
+                n_grid[idx3(i, j, k, NyT, NzT)] = std::sqrt(m.eps_r * m.mu_r);
             }
 }
-
-
-
