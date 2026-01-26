@@ -10,6 +10,7 @@
 #include <vector>
 #include <string>
 #include <limits>  // for std::numeric_limits (NaN for default physical coords)
+#include "tls_materials.hpp"  // TLS material library
 
 namespace UserConfig {
 
@@ -257,14 +258,13 @@ constexpr double PROBE_Z = 500e-9;      // Probe z position (m)
 //                         6. TWO-LEVEL SYSTEM (GAIN MEDIUM) CONFIGURATION
 // ============================================================================
 //
-// TLS Material Library System:
-// 1. Define named TLS materials in TLS_MATERIALS below
-// 2. Reference them by name in STRUCTURES using tls_material field
+// TLS materials are defined in: tls_materials.hpp
+// Reference them by name in STRUCTURES using the tls_material field.
 //
 // Example:
-//   TLS_MATERIALS: {"my_gain", 1500e-9, 7e12, 1e-12, 1e25, 1.0}
-//   STRUCTURES: {"box", 3.0, {...}, "my_gain"}   // has TLS
-//               {"box", 4.0, {...}, ""}          // no TLS (empty string)
+//   In tls_materials.hpp: {"gain_1500nm", 1500e-9, 7e12, 1e-12, 1e25, 1.0}
+//   In STRUCTURES below:  {"box", 3.0, {...}, "gain_1500nm"}  // with TLS
+//                         {"box", 4.0, {...}, ""}             // no TLS
 
 // Global enable for two-level system (master switch)
 // If false, ALL TLS will be disabled regardless of per-structure settings
@@ -272,42 +272,6 @@ constexpr bool TLS_ENABLED = true;
 
 // Enable population clamping (optional, for debugging)
 constexpr bool TLS_ENABLE_CLAMP = false;
-
-// -------------------- TLS Material Definition --------------------
-// Each TLS material has a unique name and associated parameters
-struct TLSMaterialDef {
-    std::string name;           // Unique name to reference this TLS material
-    double lambda0;             // Transition wavelength (m)
-    double gamma;               // Polarization damping rate (1/s)
-    double tau;                 // Upper level lifetime (s)
-    double N0;                  // Dipole density (atoms/m³)
-    double inversion_fraction;  // Initial population inversion (0 to 1)
-                                // 0.5 = thermal equilibrium
-                                // > 0.5 = population inversion (gain)
-                                // 1.0 = full inversion (all atoms in upper state)
-};
-
-// -------------------- TLS Material Library --------------------
-// Define all your TLS materials here with unique names.
-// Then reference them by name in STRUCTURES using the tls_material field.
-//
-// Format: {name, lambda0, gamma, tau, N0, inversion_fraction}
-//
-inline const std::vector<TLSMaterialDef> TLS_MATERIALS = {
-    {"gain_1500nm", 1500e-9, 7e12, 1e-12, 1e25, 1.0},
-    // Add more TLS materials as needed:
-    // {"gain_1300nm", 1300e-9, 5e12, 2e-12, 5e24, 0.8},
-    // {"weak_gain",   1550e-9, 1e13, 5e-12, 1e24, 0.6},
-};
-
-// Helper function to find TLS material by name (returns nullptr if not found)
-inline const TLSMaterialDef* find_tls_material(const std::string& name) {
-    if (name.empty()) return nullptr;
-    for (const auto& mat : TLS_MATERIALS) {
-        if (mat.name == name) return &mat;
-    }
-    return nullptr;
-}
 
 
 // ============================================================================

@@ -775,9 +775,9 @@ namespace Config {
             for (const auto& s : UserConfig::STRUCTURES) {
                 Material mat = make_nk(s.n);
 
-                // Look up TLS material by name
+                // Look up TLS material by name from tls_materials.hpp
                 StructureTLSConfig tls_cfg;
-                const auto* tls_mat = UserConfig::find_tls_material(s.tls_material);
+                const auto* tls_mat = TLSMaterials::find(s.tls_material);
                 if (tls_mat && UserConfig::TLS_ENABLED) {
                     tls_cfg.enabled = true;
                     tls_cfg.lambda0 = tls_mat->lambda0;
@@ -789,7 +789,7 @@ namespace Config {
                     std::cout << "[Structure] Using TLS material \"" << tls_mat->name << "\"\n";
                 } else if (!s.tls_material.empty() && !tls_mat) {
                     std::cerr << "[WARNING] TLS material \"" << s.tls_material
-                              << "\" not found in TLS_MATERIALS!\n";
+                              << "\" not found in tls_materials.hpp!\n";
                 }
 
                 if (s.type == "box") {
