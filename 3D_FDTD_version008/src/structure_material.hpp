@@ -95,10 +95,22 @@ struct CylinderZ : public Shape {
     }
 };
 
-// Structure item = geometry + material
+// ========== TLS Configuration for Structure ==========
+// Stores TLS parameters bound to a specific structure
+struct StructureTLSConfig {
+    bool enabled = false;           // Is TLS enabled for this structure?
+    real lambda0 = 1500e-9;         // Transition wavelength (m)
+    real gamma = 7e12;              // Polarization damping rate (1/s)
+    real tau = 1e-12;               // Upper level lifetime (s)
+    real N0 = 1e25;                 // Dipole density (atoms/m³)
+    real inversion_fraction = 1.0;  // Initial population inversion (0 to 1)
+};
+
+// Structure item = geometry + material + optional TLS
 struct StructureItem {
     std::shared_ptr<Shape> shape;
     Material mat;
+    StructureTLSConfig tls_config;  // TLS configuration for this structure
 };
 
 // ========== Scene container ==========
@@ -145,14 +157,35 @@ struct StructureScene {
     }
 
     // —— Add shapes with physical coordinates —— //
-    void add_box(AABB bb, const Material& m) {
-        items.push_back({ std::make_shared<Box>(bb), m });
+    // Each add_* method now accepts optional TLS configuration
+    void add_box(AABB bb, const Material& m, const StructureTLSConfig& tls = {}) {
+        items.push_back({ std::make_shared<Box>(bb), m, tls });
     }
-    void add_sphere(real cx, real cy, real cz, real r, const Material& m) {
-        items.push_back({ std::make_shared<Sphere>(cx,cy,cz,r), m });
+    void add_sphere(real cx, real cy, real cz, real r, const Material& m, const StructureTLSConfig& tls = {}) {
+        items.push_back({ std::make_shared<Sphere>(cx,cy,cz,r), m, tls });
     }
-    void add_cylinder_z(real cx, real cy, real r, real z0, real z1, const Material& m) {
-        items.push_back({ std::make_shared<CylinderZ>(cx,cy,r,z0,z1), m });
+    void add_cylinder_z(real cx, real cy, real r, real z0, real z1, const Material& m, const StructureTLSConfig& tls = {}) {
+        items.push_back({ std::make_shared<CylinderZ>(cx,cy,r,z0,z1), m, tls });
+    }
+
+    // —— Get structures with TLS enabled —— //
+    // Returns a vector of items that have TLS enabled
+    std::vector<const StructureItem*> get_tls_structures() const {
+        std::vector<const StructureItem*> tls_items;
+        for (const auto& item : items) {
+            if (item.tls_config.enabled) {
+                tls_items.push_back(&item);
+            }
+        }
+        return tls_items;
+    }
+
+    // Check if any structure has TLS enabled
+    bool has_any_tls() const {
+        for (const auto& item : items) {
+            if (item.tls_config.enabled) return true;
+        }
+        return false;
     }
 
     // —— Extract structure bounds for auto mesh generator —— //

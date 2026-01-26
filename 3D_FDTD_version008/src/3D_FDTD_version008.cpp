@@ -108,53 +108,109 @@ int main() {
     // Flag to track if we're using parallel mode
     const bool use_parallel = domain_decomp.is_parallel();
 
-    // ===== 5. Initialize Two-Level System (if enabled) =====
-    TwoLevelParams tls_params;  // Uses defaults from UserConfig
+    // ===== 5. Initialize Two-Level System (STRUCTURE-BOUND TLS) =====
+    // TLS is now bound to structures! Each structure with has_tls=true gets its own TLS region.
+    TwoLevelParams tls_params;  // For backward compatibility (used by some diagnostics)
     TwoLevelState tls_state;
+    TLSRegionManager tls_manager;  // NEW: Manager for multi-region TLS
 
-    if (UserConfig::TLS_ENABLED) {
-        // Finalize TLS parameters
-        tls_params.finalize();
-        tls_params.finalize_with_dt(P.dt);
+    // Check if any structure has TLS enabled
+    bool any_tls_enabled = UserConfig::TLS_ENABLED && ctx.scene.has_any_tls();
 
-        // Allocate TLS state
+    if (any_tls_enabled) {
+        std::cout << "\n========================================\n";
+        std::cout << "Initializing Structure-Bound TLS\n";
+        std::cout << "========================================\n";
+
+        // Allocate TLS state arrays
         tls_state.allocate(NxT, NyT, NzT);
 
-        // Calculate gain region bounds from ABSOLUTE PHYSICAL COORDINATES
-        // Convert from absolute coordinates to coordinates relative to physical domain origin
-        const real gain_x_min_rel = UserConfig::GAIN_X_MIN - P.domain_x_min;
-        const real gain_x_max_rel = UserConfig::GAIN_X_MAX - P.domain_x_min;
-        const real gain_y_min_rel = UserConfig::GAIN_Y_MIN - P.domain_y_min;
-        const real gain_y_max_rel = UserConfig::GAIN_Y_MAX - P.domain_y_min;
-        const real gain_z_min_rel = UserConfig::GAIN_Z_MIN - P.domain_z_min;
-        const real gain_z_max_rel = UserConfig::GAIN_Z_MAX - P.domain_z_min;
+        // Get structures with TLS enabled
+        auto tls_structures = ctx.scene.get_tls_structures();
+        std::cout << "[TLS] Found " << tls_structures.size() << " structure(s) with TLS\n";
 
-        // Convert physical coordinates to grid indices
-        const size_t i0 = ctx.grid_spacing.physical_to_index_x(gain_x_min_rel);
-        const size_t i1 = ctx.grid_spacing.physical_to_index_x(gain_x_max_rel) + 1;
-        const size_t j0 = ctx.grid_spacing.physical_to_index_y(gain_y_min_rel);
-        const size_t j1 = ctx.grid_spacing.physical_to_index_y(gain_y_max_rel) + 1;
-        const size_t k0 = ctx.grid_spacing.physical_to_index_z(gain_z_min_rel);
-        const size_t k1 = ctx.grid_spacing.physical_to_index_z(gain_z_max_rel) + 1;
+        // Add each TLS structure as a region
+        for (size_t idx = 0; idx < tls_structures.size(); ++idx) {
+            const auto* item = tls_structures[idx];
+            const auto& tls_cfg = item->tls_config;
 
-        std::cout << "Gain region physical coords: ["
-                  << UserConfig::GAIN_X_MIN * 1e9 << ", " << UserConfig::GAIN_X_MAX * 1e9 << "] x ["
-                  << UserConfig::GAIN_Y_MIN * 1e9 << ", " << UserConfig::GAIN_Y_MAX * 1e9 << "] x ["
-                  << UserConfig::GAIN_Z_MIN * 1e9 << ", " << UserConfig::GAIN_Z_MAX * 1e9 << "] nm\n";
-        std::cout << "Gain region grid indices: [" << i0 << "," << i1 << ") x ["
-                  << j0 << "," << j1 << ") x [" << k0 << "," << k1 << ")\n";
-        std::cout << "Gain region size: " << (i1 - i0) << " x " << (j1 - j0) << " x " << (k1 - k0) << " cells\n";
+            // Get structure bounding box
+            AABB bb = item->shape->bounding_box();
 
-        tls_state.initialize_gain_region(
-            i0, i1, j0, j1, k0, k1,
-            tls_params.N0_total,
-            ctx.grid_spacing,  // Pass grid spacing for cell volume calculation
-            UserConfig::GAIN_INVERSION_FRACTION
-        );
+            // Convert from total coordinates to physical coordinates
+            // (subtract PML offset since grid_spacing uses physical coords)
+            real pml_x = ctx.grid_spacing.x_bounds[ctx.npml];
+            real pml_y = ctx.grid_spacing.y_bounds[ctx.npml];
+            real pml_z = ctx.grid_spacing.z_bounds[ctx.npml];
 
-        std::cout << "Two-level gain region initialized\n";
+            real x_min_phys = bb.x0 - pml_x;
+            real x_max_phys = bb.x1 - pml_x;
+            real y_min_phys = bb.y0 - pml_y;
+            real y_max_phys = bb.y1 - pml_y;
+            real z_min_phys = bb.z0 - pml_z;
+            real z_max_phys = bb.z1 - pml_z;
+
+            // Create TLS parameters for this region
+            TwoLevelParams region_params;
+            region_params.lambda0 = tls_cfg.lambda0;
+            region_params.gamma = tls_cfg.gamma;
+            region_params.tau = tls_cfg.tau;
+            region_params.N0_total = tls_cfg.N0;
+            region_params.enable_population_clamp = UserConfig::TLS_ENABLE_CLAMP;
+
+            // Add region to manager
+            std::string region_name = "structure_" + std::to_string(idx);
+            tls_manager.add_region_from_structure(
+                ctx.grid_spacing,
+                x_min_phys, x_max_phys,
+                y_min_phys, y_max_phys,
+                z_min_phys, z_max_phys,
+                region_params,
+                tls_cfg.inversion_fraction,  // Pass inversion fraction
+                region_name
+            );
+        }
+
+        // Initialize all TLS regions
+        // This will set up Ndip, Nu, Ng, Ng0 for each region
+        tls_manager.initialize(tls_state, ctx.grid_spacing);
+
+        // Finalize coefficients with dt
+        tls_manager.finalize_with_dt(P.dt);
+
+        // For backward compatibility, also initialize tls_params with first region's params
+        if (tls_manager.num_regions() > 0) {
+            tls_params = tls_manager.regions[0].params;
+        }
+
+        // Update gain region bounds in tls_state for diagnostics
+        // Use the union of all regions
+        if (tls_manager.num_regions() > 0) {
+            tls_state.gain_i0 = tls_manager.regions[0].i0;
+            tls_state.gain_i1 = tls_manager.regions[0].i1;
+            tls_state.gain_j0 = tls_manager.regions[0].j0;
+            tls_state.gain_j1 = tls_manager.regions[0].j1;
+            tls_state.gain_k0 = tls_manager.regions[0].k0;
+            tls_state.gain_k1 = tls_manager.regions[0].k1;
+
+            for (size_t r = 1; r < tls_manager.num_regions(); ++r) {
+                const auto& region = tls_manager.regions[r];
+                tls_state.gain_i0 = std::min(tls_state.gain_i0, region.i0);
+                tls_state.gain_i1 = std::max(tls_state.gain_i1, region.i1);
+                tls_state.gain_j0 = std::min(tls_state.gain_j0, region.j0);
+                tls_state.gain_j1 = std::max(tls_state.gain_j1, region.j1);
+                tls_state.gain_k0 = std::min(tls_state.gain_k0, region.k0);
+                tls_state.gain_k1 = std::max(tls_state.gain_k1, region.k1);
+            }
+        }
+
+        std::cout << "========================================\n\n";
     } else {
-        std::cout << "Two-level system: DISABLED\n";
+        if (!UserConfig::TLS_ENABLED) {
+            std::cout << "Two-level system: DISABLED (TLS_ENABLED = false)\n";
+        } else {
+            std::cout << "Two-level system: DISABLED (no structures with has_tls = true)\n";
+        }
     }
 
     // ===== 6. Initialize TLS detectors (if enabled) =====
@@ -172,7 +228,7 @@ int main() {
     std::unique_ptr<PolarizationDiagnostics> pol_diagnostics;
     std::unique_ptr<TLSGlobalHistory> tls_global_history;
 
-    if (UserConfig::TLS_ENABLED) {
+    if (any_tls_enabled) {
         // VOLUME DENSITY FORMULATION: Pass GridSpacing for proper integration
         pop_detector = std::make_unique<PopulationTimeSeriesDetector>(
             out_root, "populations",
@@ -205,7 +261,7 @@ int main() {
             false                // auto_plot disabled by default (portable)
         );
 
-        std::cout << "TLS detectors initialized\n";
+        std::cout << "TLS detectors initialized (" << tls_manager.num_regions() << " region(s))\n";
     }
 
     // ===== 7. Initialize stability monitor =====
@@ -236,9 +292,10 @@ int main() {
         domain_decomp.initial_scatter(Ex, Ey, Ez, Hx, Hy, Hz);
 
         // Initialize TLS in subdomains (if TLS enabled)
-        if (UserConfig::TLS_ENABLED) {
+        if (any_tls_enabled) {
             domain_decomp.initialize_tls(tls_state);
             std::cout << "[ParallelV2] TLS will be computed locally in each subdomain\n";
+            std::cout << "  - " << tls_manager.num_regions() << " TLS region(s) bound to structures\n";
             std::cout << "  - NO gather/scatter needed for TLS during computation\n";
         }
     }
@@ -274,8 +331,10 @@ int main() {
             ParallelV2::parallel_update_H(domain_decomp);
 
             // Step 3: Update E-field in all subdomains (includes PML and TLS)
-            if (UserConfig::TLS_ENABLED) {
+            if (any_tls_enabled) {
                 // TLS is computed locally in each subdomain - NO gather/scatter needed!
+                // Note: For parallel mode with multi-region TLS, we use the first region's params
+                // TODO: Full multi-region support in parallel mode
                 ParallelV2::parallel_update_E_with_tls(domain_decomp, P.dt, tls_params);
             } else {
                 ParallelV2::parallel_update_E(domain_decomp);
@@ -288,7 +347,7 @@ int main() {
             if (need_global_data) {
                 domain_decomp.gather_fields_for_output(Ex, Ey, Ez, Hx, Hy, Hz);
                 // Also gather TLS state for diagnostics
-                if (UserConfig::TLS_ENABLED) {
+                if (any_tls_enabled) {
                     domain_decomp.gather_tls_for_output(tls_state);
                 }
             }
@@ -310,8 +369,9 @@ int main() {
             }
 
             // Step 2: Update polarization (if TLS enabled)
-            if (UserConfig::TLS_ENABLED) {
-                update_polarization(NxT, NyT, NzT, tls_params, Ez, tls_state);
+            if (any_tls_enabled) {
+                // Use multi-region update for structure-bound TLS
+                update_polarization_multi_region(NxT, NyT, NzT, tls_manager, Ez, tls_state);
             }
 
             // Step 3: Update H-field
@@ -334,7 +394,7 @@ int main() {
             rt.after_H(n, Ex, Ey, Ez, Hx, Hy, Hz);
 
             // Step 4: Update E-field
-            if (UserConfig::TLS_ENABLED) {
+            if (any_tls_enabled) {
                 // With TLS: includes polarization source term -dP/dt
                 fdtd_update_E_with_gain(
                     NxT, NyT, NzT,
@@ -377,13 +437,13 @@ int main() {
 
         // Step 5: Update populations (if TLS enabled)
         // For parallel mode: populations already updated in parallel_update_E_with_tls
-        // For serial mode: update populations here
-        if (UserConfig::TLS_ENABLED && !use_parallel) {
-            update_populations(NxT, NyT, NzT, P.dt, tls_params, Ez, tls_state);
+        // For serial mode: update populations here using multi-region update
+        if (any_tls_enabled && !use_parallel) {
+            update_populations_multi_region(NxT, NyT, NzT, P.dt, tls_manager, Ez, tls_state);
         }
 
         // Record TLS diagnostics (need global data which was gathered above)
-        if (UserConfig::TLS_ENABLED) {
+        if (any_tls_enabled) {
             // For parallel mode: only record when we have gathered data
             bool can_record = !use_parallel || (n % UserConfig::STABILITY_MONITOR_INTERVAL == 0) || (n % P.saveEvery == 0);
             if (can_record) {
@@ -416,7 +476,7 @@ int main() {
             // Progress output
             real max_E = stability_monitor.get_max_E(Ex, Ey, Ez);
 
-            if (UserConfig::TLS_ENABLED) {
+            if (any_tls_enabled) {
                 real max_P = NumericUtils::max_abs(tls_state.Pz);
                 // VOLUME DENSITY FORMULATION: Use integrated functions
                 real total_Nu = compute_integrated_Nu(tls_state, ctx.grid_spacing);

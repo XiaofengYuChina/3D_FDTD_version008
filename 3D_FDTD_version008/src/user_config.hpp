@@ -256,41 +256,47 @@ constexpr double PROBE_Z = 500e-9;      // Probe z position (m)
 // ============================================================================
 //                         6. TWO-LEVEL SYSTEM (GAIN MEDIUM) CONFIGURATION
 // ============================================================================
+//
+// Two-Level System (TLS) is now BOUND TO STRUCTURES!
+// Each structure can optionally have its own TLS with independent parameters.
+// The TLS gain region automatically matches the structure's geometry.
+//
+// To add TLS to a structure:
+// 1. Set has_tls = true in StructureDef
+// 2. Fill in the tls field with TLS parameters
+//
+// The global TLS_ENABLED flag below enables/disables ALL structure-bound TLS.
+// Individual structures can be enabled/disabled via has_tls field.
 
-// Enable two-level gain medium
+// Global enable for two-level system (master switch)
+// If false, ALL TLS will be disabled regardless of per-structure settings
 constexpr bool TLS_ENABLED = true;
-
-// Transition wavelength (meters)
-constexpr double TLS_LAMBDA0 = 1500e-9;
-
-// Polarization damping rate (1/s)
-constexpr double TLS_GAMMA = 7e12;
-
-// Upper level lifetime (seconds)
-// WARNING: Very small values (< 1e-12) may cause numerical instability
-constexpr double TLS_TAU = 1e-12;
-
-// Total dipole DENSITY (atoms/m³) - will be multiplied by cell volume internally
-// Typical values: 1e22 - 1e24 atoms/m³ for solid gain media
-// Example: 5e23 atoms/m³ with 10nm³ cells → ~0.5 atoms per cell
-constexpr double TLS_N0_TOTAL = 1e25;
 
 // Enable population clamping (optional, for debugging)
 constexpr bool TLS_ENABLE_CLAMP = false;
 
-// --- Gain region configuration ---
-// Gain region defined using ABSOLUTE PHYSICAL COORDINATES (meters)
-// Must be within the domain boundaries defined above
-constexpr double GAIN_X_MIN = 1000e-9;   // Gain region x minimum (m) - matches box
-constexpr double GAIN_X_MAX = 2000e-9;  // Gain region x maximum (m)
-constexpr double GAIN_Y_MIN = 1000e-9;   // Gain region y minimum (m)
-constexpr double GAIN_Y_MAX = 2000e-9;  // Gain region y maximum (m)
-constexpr double GAIN_Z_MIN = 450e-9;   // Gain region z minimum (m)
-constexpr double GAIN_Z_MAX = 550e-9;   // Gain region z maximum (m)
+// -------------------- TLS Parameters Definition --------------------
+// These parameters define the atomic/molecular properties of the gain medium
+struct TLSParamsDef {
+    double lambda0;             // Transition wavelength (m)
+    double gamma;               // Polarization damping rate (1/s)
+    double tau;                 // Upper level lifetime (s)
+    double N0;                  // Dipole density (atoms/m³)
+    double inversion_fraction;  // Initial population inversion (0 to 1)
+                                // 0.5 = thermal equilibrium
+                                // > 0.5 = population inversion (gain)
+                                // 1.0 = full inversion (all atoms in upper state)
+};
 
-// Initial population inversion fraction (0 to 1)
-// 0.5 = thermal equilibrium, > 0.5 = population inversion (gain)
-constexpr double GAIN_INVERSION_FRACTION = 1.00;
+// Default TLS parameters (used when structure doesn't specify custom values)
+// These are reasonable defaults for a typical gain medium
+constexpr TLSParamsDef TLS_DEFAULT_PARAMS = {
+    1500e-9,    // lambda0: 1500 nm transition wavelength
+    7e12,       // gamma: polarization damping rate
+    1e-12,      // tau: 1 ps upper level lifetime
+    1e25,       // N0: dipole density
+    1.0         // inversion_fraction: full inversion
+};
 
 
 // ============================================================================
@@ -336,6 +342,17 @@ struct StructureDef {
     // For sphere: cx, cy, cz, radius (center and radius in meters)
     // For cylinder: cx, cy, radius, z0, z1 (center, radius, and z-bounds)
     double params[6];
+
+    // ===== Two-Level System (TLS) binding =====
+    // If has_tls is true, this structure will have a gain medium with TLS
+    // The TLS region automatically matches the structure geometry
+    bool has_tls = false;       // Enable TLS for this structure
+
+    // TLS parameters for this structure
+    // Only used if has_tls is true
+    // If use_default_tls_params is true, TLS_DEFAULT_PARAMS will be used
+    bool use_default_tls_params = true;
+    TLSParamsDef tls = TLS_DEFAULT_PARAMS;
 };
 
 // Define structures here
@@ -345,18 +362,37 @@ struct StructureDef {
 // Example configurations:
 
 // Configuration 1: Center cube + cylinder (default demo)
+// NEW: Each structure can now have TLS bound to it!
+//
+// Structure definition format:
+//   {type, n, {params...}, has_tls, use_default_tls_params, {tls_params}}
+//
+// Examples:
+//   {"box", 2.0, {...}, false}                    // Dielectric only, no TLS
+//   {"box", 2.0, {...}, true}                     // With TLS using default params
+//   {"box", 2.0, {...}, true, false, {lambda0, gamma, tau, N0, inv_frac}}  // Custom TLS
+//
 inline const std::vector<StructureDef> STRUCTURES = {
-    // Structure 1: Box (200nm x 200nm x 200nm, n=4)
-    // params = {x0, x1, y0, y1, z0, z1}
-    // {"box", 4.0, {900e-9, 1100e-9, 900e-9, 1100e-9, 400e-9, 600e-9}},
-
-    // Structure 2: Cylinder (r=100nm, h=200nm, n=2)
+    // Structure 1: Cylinder with TLS (gain medium)
+    // This cylinder has TLS bound to it - the gain region matches the cylinder geometry
     // params = {cx, cy, radius, z0, z1, 0}
-    // {"cylinder", 2.0, {700e-9, 700e-9, 100e-9, 400e-9, 600e-9, 0}},
-    {"cylinder", 3.3, {2000e-9, 2000e-9, 1000e-9, 400e-9, 600e-9, 0}},
+    {"cylinder", 3.3, {2000e-9, 2000e-9, 1000e-9, 400e-9, 600e-9, 0},
+     true,   // has_tls = true: enable TLS for this structure
+     true,   // use_default_tls_params = true: use TLS_DEFAULT_PARAMS
+     TLS_DEFAULT_PARAMS  // tls params (ignored when use_default_tls_params = true)
+    },
 
-    // Structure 3: Additional box (200nm x 200nm x 200nm, n=3)
-    // {"box", 3.0, {1200e-9, 1400e-9, 1200e-9, 1400e-9, 400e-9, 600e-9}},
+    // Example: Box WITHOUT TLS (pure dielectric)
+    // {"box", 4.0, {900e-9, 1100e-9, 900e-9, 1100e-9, 400e-9, 600e-9},
+    //  false  // has_tls = false: no TLS, just dielectric
+    // },
+
+    // Example: Box WITH custom TLS parameters
+    // {"box", 3.0, {1200e-9, 1400e-9, 1200e-9, 1400e-9, 400e-9, 600e-9},
+    //  true,  // has_tls = true
+    //  false, // use_default_tls_params = false: use custom parameters below
+    //  {1300e-9, 5e12, 2e-12, 5e24, 0.8}  // {lambda0, gamma, tau, N0, inversion}
+    // },
 };
 
 // Background material refractive index (default: air, n=1)

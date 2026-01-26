@@ -11,21 +11,24 @@
 #include "user_config.hpp"
 #include "omp_config.hpp"
 
+// Forward declaration
+struct StructureTLSConfig;
+
 // ========== Two-Level System Parameters ==========
 struct TwoLevelParams {
-    // Atomic transition parameters (defaults from UserConfig)
-    real lambda0 = UserConfig::TLS_LAMBDA0;     // Transition wavelength (m)
+    // Atomic transition parameters (defaults from UserConfig::TLS_DEFAULT_PARAMS)
+    real lambda0 = UserConfig::TLS_DEFAULT_PARAMS.lambda0;     // Transition wavelength (m)
     real omega_a = 0.0;                         // Angular frequency ωa = 2πc/λ₀ (rad/s)
 
-    // Decay and damping (defaults from UserConfig)
-    real gamma = UserConfig::TLS_GAMMA;     // Polarization damping rate γ (s⁻¹)
-    real tau = UserConfig::TLS_TAU;         // Upper level lifetime τ (s)
+    // Decay and damping (defaults from UserConfig::TLS_DEFAULT_PARAMS)
+    real gamma = UserConfig::TLS_DEFAULT_PARAMS.gamma;     // Polarization damping rate γ (s⁻¹)
+    real tau = UserConfig::TLS_DEFAULT_PARAMS.tau;         // Upper level lifetime τ (s)
 
     // Transition dipole moment (calculated from Einstein A coefficient)
     real mu_z = 0.0;                        // |μz| = √(3πε₀ℏc³/(ωa³τ))
 
-    // Spatial distribution of dipoles (default from UserConfig)
-    real N0_total = UserConfig::TLS_N0_TOTAL;   // Total dipole density (m⁻³)
+    // Spatial distribution of dipoles (default from UserConfig::TLS_DEFAULT_PARAMS)
+    real N0_total = UserConfig::TLS_DEFAULT_PARAMS.N0;   // Total dipole density (m⁻³)
 
     // Physical constants (stored for use in stimulated term calculation)
     real hbar = PhysConst::HBAR;            // Reduced Planck constant (J·s)
@@ -661,4 +664,322 @@ inline real compute_polarization_energy(
         }
     }
     return total_energy;
+}
+
+// ============================================================================
+//                    MULTI-REGION TLS SUPPORT (Structure-Bound TLS)
+// ============================================================================
+//
+// This section provides support for binding TLS to structures.
+// Each structure can have its own TLS region with independent parameters.
+// The TLS regions are managed together but each maintains its own physics.
+
+// ========== Single TLS Region ==========
+// Represents a TLS region bound to a specific structure
+struct TLSRegion {
+    // Region identifier
+    size_t region_id = 0;
+    std::string name = "region_0";
+
+    // Bounds in grid indices (half-open intervals [i0, i1))
+    size_t i0 = 0, i1 = 0;
+    size_t j0 = 0, j1 = 0;
+    size_t k0 = 0, k1 = 0;
+
+    // TLS parameters for this region
+    TwoLevelParams params;
+
+    // Check if a cell index is within this region
+    bool contains(size_t i, size_t j, size_t k) const {
+        return (i >= i0 && i < i1 &&
+                j >= j0 && j < j1 &&
+                k >= k0 && k < k1);
+    }
+
+    // Get the bounding box in physical coordinates
+    void get_physical_bounds(const GridSpacing& grid,
+                             real& x_min, real& x_max,
+                             real& y_min, real& y_max,
+                             real& z_min, real& z_max) const {
+        x_min = grid.x_bounds[i0];
+        x_max = grid.x_bounds[i1];
+        y_min = grid.y_bounds[j0];
+        y_max = grid.y_bounds[j1];
+        z_min = grid.z_bounds[k0];
+        z_max = grid.z_bounds[k1];
+    }
+
+    // Initial population inversion fraction for this region
+    // This is set from the structure's TLS config
+    real inversion_fraction = 1.0;
+
+    // Initialize gain region for this TLS region
+    void initialize(TwoLevelState& state, const GridSpacing& grid) {
+        // Validate bounds
+        if (i0 >= i1 || j0 >= j1 || k0 >= k1) {
+            std::cerr << "[TLSRegion " << name << "] Warning: Invalid bounds, skipping\n";
+            return;
+        }
+
+        size_t NyT = state.NyT;
+        size_t NzT = state.NzT;
+
+        real total_volume = 0.0;
+        real N0_density = params.N0_total;
+
+        // Initialize cells in this region
+        for (size_t i = i0; i < i1; ++i) {
+            for (size_t j = j0; j < j1; ++j) {
+                for (size_t k = k0; k < k1; ++k) {
+                    size_t id = idx3(i, j, k, NyT, NzT);
+
+                    state.Ndip[id] = N0_density;
+                    state.Nu[id] = inversion_fraction * N0_density;
+                    state.Ng[id] = (1.0 - inversion_fraction) * N0_density;
+                    state.Ng0[id] = N0_density;
+
+                    real cell_volume = grid.dx[i] * grid.dy[j] * grid.dz[k];
+                    total_volume += cell_volume;
+                }
+            }
+        }
+
+        size_t n_cells = (i1 - i0) * (j1 - j0) * (k1 - k0);
+        std::cout << "[TLSRegion " << name << "] Initialized:\n";
+        std::cout << "  Bounds: [" << i0 << "," << i1 << ") x [" << j0 << "," << j1 << ") x [" << k0 << "," << k1 << ")\n";
+        std::cout << "  Cells: " << n_cells << ", Volume: " << total_volume * 1e18 << " μm³\n";
+        std::cout << "  λ₀ = " << params.lambda0 * 1e9 << " nm, γ = " << params.gamma << " s⁻¹, τ = " << params.tau * 1e12 << " ps\n";
+        std::cout << "  N₀ = " << N0_density << " m⁻³, Inversion = " << inversion_fraction << "\n";
+    }
+};
+
+// ========== Multi-Region TLS Manager ==========
+// Manages multiple TLS regions, each potentially with different parameters
+class TLSRegionManager {
+public:
+    // All TLS regions
+    std::vector<TLSRegion> regions;
+
+    // Grid dimensions (stored for convenience)
+    size_t NxT = 0, NyT = 0, NzT = 0;
+
+    // Global enable flag
+    bool enabled = false;
+
+    // Index mapping: for each cell, which region does it belong to?
+    // -1 means no TLS region, >= 0 is the region index
+    std::vector<int> cell_region_map;
+
+    // Add a TLS region from structure bounds
+    // Converts physical coordinates to grid indices
+    void add_region_from_structure(
+        const GridSpacing& grid,
+        real x_min, real x_max,
+        real y_min, real y_max,
+        real z_min, real z_max,
+        const TwoLevelParams& params,
+        real inversion_frac,
+        const std::string& name = ""
+    ) {
+        TLSRegion region;
+        region.region_id = regions.size();
+        region.name = name.empty() ? "region_" + std::to_string(region.region_id) : name;
+
+        // Convert physical coordinates to grid indices
+        // Note: grid coordinates are relative to core origin (after PML)
+        region.i0 = grid.physical_to_index_x(x_min);
+        region.i1 = grid.physical_to_index_x(x_max) + 1;
+        region.j0 = grid.physical_to_index_y(y_min);
+        region.j1 = grid.physical_to_index_y(y_max) + 1;
+        region.k0 = grid.physical_to_index_z(z_min);
+        region.k1 = grid.physical_to_index_z(z_max) + 1;
+
+        region.params = params;
+        region.inversion_fraction = inversion_frac;
+
+        regions.push_back(region);
+        std::cout << "[TLSManager] Added region '" << region.name << "' at physical coords ["
+                  << x_min * 1e9 << ", " << x_max * 1e9 << "] x ["
+                  << y_min * 1e9 << ", " << y_max * 1e9 << "] x ["
+                  << z_min * 1e9 << ", " << z_max * 1e9 << "] nm\n";
+    }
+
+    // Initialize all regions
+    void initialize(TwoLevelState& state, const GridSpacing& grid) {
+        if (regions.empty()) {
+            enabled = false;
+            return;
+        }
+
+        enabled = true;
+        NxT = state.NxT;
+        NyT = state.NyT;
+        NzT = state.NzT;
+
+        // Build cell-to-region map
+        cell_region_map.assign(NxT * NyT * NzT, -1);
+
+        for (size_t r = 0; r < regions.size(); ++r) {
+            auto& region = regions[r];
+
+            // Finalize parameters
+            region.params.finalize();
+
+            // Initialize this region's cells
+            region.initialize(state, grid);
+
+            // Update cell-to-region map
+            for (size_t i = region.i0; i < region.i1; ++i) {
+                for (size_t j = region.j0; j < region.j1; ++j) {
+                    for (size_t k = region.k0; k < region.k1; ++k) {
+                        size_t id = idx3(i, j, k, NyT, NzT);
+                        cell_region_map[id] = static_cast<int>(r);
+                    }
+                }
+            }
+        }
+
+        std::cout << "[TLSManager] Initialized " << regions.size() << " TLS region(s)\n";
+    }
+
+    // Finalize all regions with dt (must be called after make_context)
+    void finalize_with_dt(real dt) {
+        for (auto& region : regions) {
+            region.params.finalize_with_dt(dt);
+        }
+    }
+
+    // Get the region for a cell (returns nullptr if cell has no TLS)
+    const TLSRegion* get_region_for_cell(size_t i, size_t j, size_t k) const {
+        if (!enabled) return nullptr;
+        size_t id = idx3(i, j, k, NyT, NzT);
+        if (id >= cell_region_map.size()) return nullptr;
+        int region_idx = cell_region_map[id];
+        if (region_idx < 0 || region_idx >= (int)regions.size()) return nullptr;
+        return &regions[region_idx];
+    }
+
+    // Get region by index
+    TLSRegion* get_region(size_t idx) {
+        if (idx < regions.size()) return &regions[idx];
+        return nullptr;
+    }
+
+    // Number of regions
+    size_t num_regions() const { return regions.size(); }
+
+    // Check if any region exists
+    bool has_regions() const { return !regions.empty(); }
+};
+
+// ========== Multi-Region Update Functions ==========
+
+// Update polarization for multi-region TLS
+// Each cell uses the parameters from its assigned region
+inline void update_polarization_multi_region(
+    size_t NxT, size_t NyT, size_t NzT,
+    const TLSRegionManager& manager,
+    const std::vector<real>& Ez,
+    TwoLevelState& state
+) {
+    if (!manager.enabled) return;
+
+#if FDTD_OMP_ENABLED
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < (int)NxT; ++i) {
+        for (int j = 0; j < (int)NyT; ++j) {
+            for (int k = 0; k < (int)NzT; ++k) {
+                size_t id = idx3((size_t)i, (size_t)j, (size_t)k, NyT, NzT);
+
+                // Skip if no dipoles or no region
+                if (state.Ndip[id] <= 0) continue;
+
+                // Get the region for this cell
+                const TLSRegion* region = manager.get_region_for_cell(i, j, k);
+                if (!region) continue;
+
+                const auto& params = region->params;
+                if (!params.coefficients_initialized) continue;
+
+                // Three-point recursion with region-specific parameters
+                real Ng_frac = (state.Ng0[id] > 0) ?
+                    (state.Ng[id] - state.Nu[id]) / state.Ng0[id] : 0.0;
+
+                real driving_factor = state.Ndip[id] * Ng_frac * Ez[id];
+
+                real Pz_new = params.kapa_coeff * driving_factor
+                            + params.pa2 * state.Pz[id]
+                            + params.pa3 * state.Pz_prev[id];
+
+                real Pz_old = state.Pz[id];
+                real dPz_dt_half = (Pz_new - Pz_old) * params.inv_dt;
+
+                state.Pz_prev[id] = Pz_old;
+                state.Pz[id] = Pz_new;
+                state.dPz_dt[id] = dPz_dt_half;
+            }
+        }
+    }
+}
+
+// Update populations for multi-region TLS
+inline void update_populations_multi_region(
+    size_t NxT, size_t NyT, size_t NzT,
+    real dt,
+    const TLSRegionManager& manager,
+    const std::vector<real>& Ez,
+    TwoLevelState& state
+) {
+    if (!manager.enabled) return;
+
+#if FDTD_OMP_ENABLED
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < (int)NxT; ++i) {
+        for (int j = 0; j < (int)NyT; ++j) {
+            for (int k = 0; k < (int)NzT; ++k) {
+                size_t id = idx3((size_t)i, (size_t)j, (size_t)k, NyT, NzT);
+
+                if (state.Ndip[id] <= 0) continue;
+
+                const TLSRegion* region = manager.get_region_for_cell(i, j, k);
+                if (!region) continue;
+
+                const auto& params = region->params;
+
+                real Nu_curr = state.Nu[id];
+                real Ntotal = state.Ng0[id];
+                if (Ntotal <= 0) continue;
+
+                real inv_tau = 1.0 / params.tau;
+                real inv_hbar_omega = 1.0 / (params.hbar * params.omega_a);
+
+                real E_avg = 0.5 * (Ez[id] + state.Ez_old[id]);
+                real delta_P = state.Pz[id] - state.Pz_prev[id];
+                real dP_dt = delta_P * params.inv_dt;
+                real stim_rate = E_avg * dP_dt * inv_hbar_omega;
+
+                real dNu_dt = -inv_tau * Nu_curr + stim_rate;
+                real dNg_dt = +inv_tau * Nu_curr - stim_rate;
+
+                state.Nu[id] += dt * dNu_dt;
+                state.Ng[id] += dt * dNg_dt;
+
+                state.Nu[id] = std::max(0.0, state.Nu[id]);
+                state.Ng[id] = std::max(0.0, state.Ng[id]);
+
+                if (params.enable_population_clamp) {
+                    real total = state.Nu[id] + state.Ng[id];
+                    if (total > 1e-30) {
+                        real scale = Ntotal / total;
+                        state.Nu[id] *= scale;
+                        state.Ng[id] *= scale;
+                    }
+                    state.Nu[id] = std::min(state.Nu[id], Ntotal);
+                    state.Ng[id] = Ntotal - state.Nu[id];
+                }
+            }
+        }
+    }
 }
