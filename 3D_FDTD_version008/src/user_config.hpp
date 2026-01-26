@@ -10,6 +10,7 @@
 #include <vector>
 #include <string>
 #include <limits>  // for std::numeric_limits (NaN for default physical coords)
+#include "tls_materials.hpp"  // TLS material library
 
 namespace UserConfig {
 
@@ -256,41 +257,21 @@ constexpr double PROBE_Z = 500e-9;      // Probe z position (m)
 // ============================================================================
 //                         6. TWO-LEVEL SYSTEM (GAIN MEDIUM) CONFIGURATION
 // ============================================================================
+//
+// TLS materials are defined in: tls_materials.hpp
+// Reference them by name in STRUCTURES using the tls_material field.
+//
+// Example:
+//   In tls_materials.hpp: {"gain_1500nm", 1500e-9, 7e12, 1e-12, 1e25, 1.0}
+//   In STRUCTURES below:  {"box", 3.0, {...}, "gain_1500nm"}  // with TLS
+//                         {"box", 4.0, {...}, ""}             // no TLS
 
-// Enable two-level gain medium
+// Global enable for two-level system (master switch)
+// If false, ALL TLS will be disabled regardless of per-structure settings
 constexpr bool TLS_ENABLED = true;
-
-// Transition wavelength (meters)
-constexpr double TLS_LAMBDA0 = 1500e-9;
-
-// Polarization damping rate (1/s)
-constexpr double TLS_GAMMA = 7e12;
-
-// Upper level lifetime (seconds)
-// WARNING: Very small values (< 1e-12) may cause numerical instability
-constexpr double TLS_TAU = 1e-12;
-
-// Total dipole DENSITY (atoms/m³) - will be multiplied by cell volume internally
-// Typical values: 1e22 - 1e24 atoms/m³ for solid gain media
-// Example: 5e23 atoms/m³ with 10nm³ cells → ~0.5 atoms per cell
-constexpr double TLS_N0_TOTAL = 1e25;
 
 // Enable population clamping (optional, for debugging)
 constexpr bool TLS_ENABLE_CLAMP = false;
-
-// --- Gain region configuration ---
-// Gain region defined using ABSOLUTE PHYSICAL COORDINATES (meters)
-// Must be within the domain boundaries defined above
-constexpr double GAIN_X_MIN = 1000e-9;   // Gain region x minimum (m) - matches box
-constexpr double GAIN_X_MAX = 2000e-9;  // Gain region x maximum (m)
-constexpr double GAIN_Y_MIN = 1000e-9;   // Gain region y minimum (m)
-constexpr double GAIN_Y_MAX = 2000e-9;  // Gain region y maximum (m)
-constexpr double GAIN_Z_MIN = 450e-9;   // Gain region z minimum (m)
-constexpr double GAIN_Z_MAX = 550e-9;   // Gain region z maximum (m)
-
-// Initial population inversion fraction (0 to 1)
-// 0.5 = thermal equilibrium, > 0.5 = population inversion (gain)
-constexpr double GAIN_INVERSION_FRACTION = 1.00;
 
 
 // ============================================================================
@@ -336,6 +317,11 @@ struct StructureDef {
     // For sphere: cx, cy, cz, radius (center and radius in meters)
     // For cylinder: cx, cy, radius, z0, z1 (center, radius, and z-bounds)
     double params[6];
+
+    // ===== Two-Level System (TLS) binding =====
+    // Set to a TLS material name defined in TLS_MATERIALS to add gain medium
+    // Leave empty ("") for pure dielectric (no TLS)
+    std::string tls_material = "";
 };
 
 // Define structures here
@@ -344,19 +330,25 @@ struct StructureDef {
 //
 // Example configurations:
 
-// Configuration 1: Center cube + cylinder (default demo)
+// Structure definition format:
+//   {type, n, {params...}, tls_material}
+//
+// tls_material: Name of TLS material from TLS_MATERIALS, or "" for no TLS
+//
+// Examples:
+//   {"box", 2.0, {...}, ""}              // Pure dielectric, no TLS
+//   {"box", 3.0, {...}, "gain_1500nm"}   // With TLS using "gain_1500nm" material
+//
 inline const std::vector<StructureDef> STRUCTURES = {
-    // Structure 1: Box (200nm x 200nm x 200nm, n=4)
-    // params = {x0, x1, y0, y1, z0, z1}
-    // {"box", 4.0, {900e-9, 1100e-9, 900e-9, 1100e-9, 400e-9, 600e-9}},
-
-    // Structure 2: Cylinder (r=100nm, h=200nm, n=2)
+    // Cylinder with TLS (gain medium) - references "gain_1500nm" from TLS_MATERIALS
     // params = {cx, cy, radius, z0, z1, 0}
-    // {"cylinder", 2.0, {700e-9, 700e-9, 100e-9, 400e-9, 600e-9, 0}},
-    {"cylinder", 3.3, {2000e-9, 2000e-9, 1000e-9, 400e-9, 600e-9, 0}},
+    {"cylinder", 3.3, {2000e-9, 2000e-9, 1000e-9, 400e-9, 600e-9, 0}, "gain_1500nm"},
 
-    // Structure 3: Additional box (200nm x 200nm x 200nm, n=3)
-    // {"box", 3.0, {1200e-9, 1400e-9, 1200e-9, 1400e-9, 400e-9, 600e-9}},
+    // Example: Box WITHOUT TLS (pure dielectric) - empty string means no TLS
+    // {"box", 4.0, {900e-9, 1100e-9, 900e-9, 1100e-9, 400e-9, 600e-9}, ""},
+
+    // Example: Multiple structures with different TLS materials
+    // {"box", 3.0, {100e-9, 300e-9, 100e-9, 300e-9, 400e-9, 600e-9}, "gain_1300nm"},
 };
 
 // Background material refractive index (default: air, n=1)
@@ -471,8 +463,4 @@ constexpr int PARALLEL_DECOMP_AXIS = 0;
 // 1 is sufficient for standard FDTD (nearest-neighbor stencil)
 constexpr int PARALLEL_HALO_WIDTH = 1;
 
-
 } // namespace UserConfig
-
-
-

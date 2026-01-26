@@ -757,6 +757,7 @@ namespace Config {
 
     // ===== ADD STRUCTURES TO SCENE (after mesh is generated) =====
     // Structures are read from UserConfig::STRUCTURES
+    // TLS is looked up by name from UserConfig::TLS_MATERIALS
     inline void register_default_structures() {
         g_structure_pkgs.push_back([](StructureScene& scene) {
 
@@ -768,9 +769,28 @@ namespace Config {
             real pml_y = scene.grid_spacing.y_bounds[scene.npml_cells];
             real pml_z = scene.grid_spacing.z_bounds[scene.npml_cells];
 
+            size_t tls_count = 0;
+
             // Add each structure from user config
             for (const auto& s : UserConfig::STRUCTURES) {
                 Material mat = make_nk(s.n);
+
+                // Look up TLS material by name from tls_materials.hpp
+                StructureTLSConfig tls_cfg;
+                const auto* tls_mat = TLSMaterials::find(s.tls_material);
+                if (tls_mat && UserConfig::TLS_ENABLED) {
+                    tls_cfg.enabled = true;
+                    tls_cfg.lambda0 = tls_mat->lambda0;
+                    tls_cfg.gamma = tls_mat->gamma;
+                    tls_cfg.tau = tls_mat->tau;
+                    tls_cfg.N0 = tls_mat->N0;
+                    tls_cfg.inversion_fraction = tls_mat->inversion_fraction;
+                    tls_count++;
+                    std::cout << "[Structure] Using TLS material \"" << tls_mat->name << "\"\n";
+                } else if (!s.tls_material.empty() && !tls_mat) {
+                    std::cerr << "[WARNING] TLS material \"" << s.tls_material
+                              << "\" not found in tls_materials.hpp!\n";
+                }
 
                 if (s.type == "box") {
                     // params = {x0, x1, y0, y1, z0, z1}
@@ -778,7 +798,7 @@ namespace Config {
                         pml_x + s.params[0], pml_x + s.params[1],
                         pml_y + s.params[2], pml_y + s.params[3],
                         pml_z + s.params[4], pml_z + s.params[5]
-                    }, mat);
+                    }, mat, tls_cfg);
                 }
                 else if (s.type == "sphere") {
                     // params = {cx, cy, cz, radius, 0, 0}
@@ -787,7 +807,7 @@ namespace Config {
                         pml_y + s.params[1],
                         pml_z + s.params[2],
                         s.params[3],
-                        mat
+                        mat, tls_cfg
                     );
                 }
                 else if (s.type == "cylinder") {
@@ -798,12 +818,16 @@ namespace Config {
                         s.params[2],
                         pml_z + s.params[3],
                         pml_z + s.params[4],
-                        mat
+                        mat, tls_cfg
                     );
                 }
             }
 
-            std::cout << "[Scene] Added " << scene.items.size() << " structures from UserConfig\n";
+            std::cout << "[Scene] Added " << scene.items.size() << " structures from UserConfig";
+            if (tls_count > 0) {
+                std::cout << " (" << tls_count << " with TLS)";
+            }
+            std::cout << "\n";
         });
     }
 
