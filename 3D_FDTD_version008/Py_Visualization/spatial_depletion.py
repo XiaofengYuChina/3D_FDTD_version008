@@ -35,17 +35,15 @@ with open(meta_file) as f:
 
 NxT, NyT, NzT = meta['NxT'], meta['NyT'], meta['NzT']
 grid_size = NxT * NyT * NzT
-n_timesteps = meta['nSteps'] // meta['saveEvery']
+bytes_per_frame = grid_size * 8  # float64
+
+# Binary stores only first + last frame (binary_mode: "first_and_last")
+binary_frames = meta.get('binary_frames', meta['nSteps'] // meta['saveEvery'])
 
 print(f"Grid: {NxT} x {NyT} x {NzT}")
-print(f"Timesteps: {n_timesteps}")
+print(f"Binary frames stored: {binary_frames}")
 print("Loading first and last timestep")
 
-# Calculate byte offsets
-bytes_per_frame = grid_size * 8  # float64
-offset_last = (n_timesteps - 1) * bytes_per_frame
-
-# Load first timestep
 Nu_bin = data_dir / 'populations_Nu.bin'
 Ng_bin = data_dir / 'populations_Ng.bin'
 
@@ -53,12 +51,14 @@ if not Nu_bin.exists() or not Ng_bin.exists():
     print(f"Error: Binary files not found in {data_dir}")
     exit(1)
 
+# Frame 0 = first, Frame 1 (or last) = final
+offset_last = (binary_frames - 1) * bytes_per_frame
+
 with open(Nu_bin, 'rb') as f:
     Nu_first = np.fromfile(f, dtype=np.float64, count=grid_size)
 with open(Ng_bin, 'rb') as f:
     Ng_first = np.fromfile(f, dtype=np.float64, count=grid_size)
 
-# Load last timestep
 with open(Nu_bin, 'rb') as f:
     f.seek(offset_last)
     Nu_last = np.fromfile(f, dtype=np.float64, count=grid_size)
@@ -101,7 +101,7 @@ plt.colorbar(im1, ax=axes[0], label='Nu - Ng [m⁻³]')
 
 # Final
 im2 = axes[1].imshow(slice_last.T, cmap='RdBu_r', vmin=-vmax, vmax=vmax, origin='lower')
-axes[1].set_title(f'Final Inversion (t={n_timesteps - 1})', fontsize=13, fontweight='bold')
+axes[1].set_title('Final Inversion', fontsize=13, fontweight='bold')
 axes[1].set_xlabel('x')
 axes[1].set_ylabel('y')
 plt.colorbar(im2, ax=axes[1], label='Nu - Ng [m⁻³]')

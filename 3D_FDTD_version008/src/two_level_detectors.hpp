@@ -11,7 +11,9 @@
 
 namespace fs = std::filesystem;
 
-// Nu, Ng are densities [m^-3]. Binary files store raw densities; CSV integrates with cell volume for total atom counts.
+// Nu, Ng are densities [m^-3].
+// Binary files store only the first and last frames (for spatial depletion analysis).
+// CSV integrates with cell volume for total atom counts every saveEvery steps.
 struct PopulationTimeSeriesDetector {
     fs::path det_dir;
     fs::path Nu_bin, Ng_bin, inversion_csv;
@@ -20,6 +22,8 @@ struct PopulationTimeSeriesDetector {
     size_t saveEvery, nSteps;
     real dt;
     const GridSpacing* grid_ptr;
+    bool first_frame_saved{false};
+    size_t last_saved_step{0};
 
     PopulationTimeSeriesDetector(
         const fs::path& out_root, std::string det_name,
@@ -49,38 +53,32 @@ struct PopulationTimeSeriesDetector {
         if (f_inv)
             f_inv << "t, total_Nu, total_Ng, inversion, inv_fraction\n";
 
-        std::ofstream meta(det_dir / "metadata_populations.json");
-        if (meta) {
-            meta << "{\n"
-                 << "  \"NxT\": " << NxT << ",\n"
-                 << "  \"NyT\": " << NyT << ",\n"
-                 << "  \"NzT\": " << NzT << ",\n"
-                 << "  \"saveEvery\": " << saveEvery << ",\n"
-                 << "  \"nSteps\": " << nSteps << ",\n"
-                 << "  \"dt\": " << std::setprecision(18) << dt << ",\n"
-                 << "  \"dtype\": \"float64\",\n"
-                 << "  \"binary_data_units\": \"m^-3 (density)\",\n"
-                 << "  \"csv_total_units\": \"atoms (integrated)\",\n"
-                 << "  \"what\": \"population_densities_Nu_and_Ng_vs_time\"\n"
-                 << "}\n";
-        }
         std::cout << "[PopulationTS] " << det_dir << "\n";
+        std::cout << "  Binary: first + last frame only\n";
     }
 
-    void record(size_t n, const TwoLevelState& state) {
-        if (n % saveEvery != 0) return;
-        if (!f_Nu || !f_Ng || !f_inv) return;
-
+    void write_binary_frame(const TwoLevelState& state) {
         const size_t N = state.Nu.size();
-
         for (size_t i = 0; i < N; ++i) {
             double nu_val = static_cast<double>(state.Nu[i]);
             double ng_val = static_cast<double>(state.Ng[i]);
             f_Nu.write(reinterpret_cast<const char*>(&nu_val), sizeof(double));
             f_Ng.write(reinterpret_cast<const char*>(&ng_val), sizeof(double));
         }
+    }
 
-        // Integrate density * dV to get total atom counts
+    void record(size_t n, const TwoLevelState& state) {
+        if (n % saveEvery != 0) return;
+        if (!f_inv) return;
+
+        // Binary: save only first frame
+        if (!first_frame_saved && f_Nu && f_Ng) {
+            write_binary_frame(state);
+            first_frame_saved = true;
+        }
+        last_saved_step = n;
+
+        // CSV: integrate density * dV to get total atom counts
         double total_Nu = 0.0, total_Ng = 0.0;
         for (size_t i = 0; i < NxT; ++i) {
             for (size_t j = 0; j < NyT; ++j) {
@@ -102,6 +100,37 @@ struct PopulationTimeSeriesDetector {
         f_inv << std::setprecision(18) << t << ","
               << total_Nu << "," << total_Ng << ","
               << inversion << "," << inv_fraction << "\n";
+    }
+
+    // Call at end of simulation to save the last frame binary snapshot
+    void finalize(const TwoLevelState& state) {
+        if (f_Nu && f_Ng) {
+            write_binary_frame(state);
+        }
+
+        // Write metadata after we know how many frames were stored
+        std::ofstream meta(det_dir / "metadata_populations.json");
+        if (meta) {
+            meta << "{\n"
+                 << "  \"NxT\": " << NxT << ",\n"
+                 << "  \"NyT\": " << NyT << ",\n"
+                 << "  \"NzT\": " << NzT << ",\n"
+                 << "  \"saveEvery\": " << saveEvery << ",\n"
+                 << "  \"nSteps\": " << nSteps << ",\n"
+                 << "  \"dt\": " << std::setprecision(18) << dt << ",\n"
+                 << "  \"dtype\": \"float64\",\n"
+                 << "  \"binary_frames\": 2,\n"
+                 << "  \"binary_mode\": \"first_and_last\",\n"
+                 << "  \"binary_data_units\": \"m^-3 (density)\",\n"
+                 << "  \"csv_total_units\": \"atoms (integrated)\",\n"
+                 << "  \"what\": \"population_densities_Nu_and_Ng_vs_time\"\n"
+                 << "}\n";
+        }
+
+        if (f_Nu) f_Nu.close();
+        if (f_Ng) f_Ng.close();
+        if (f_inv) f_inv.close();
+        std::cout << "[PopulationTS] Finalized: 2 binary frames + CSV time series\n";
     }
 
     ~PopulationTimeSeriesDetector() {
@@ -228,78 +257,6 @@ struct PolarizationDiagnostics {
     }
 
     ~PolarizationDiagnostics() {
-        if (f_csv) f_csv.close();
-    }
-};
-
-// Gain/Loss monitoring. Integrates densities with cell volume.
-struct GainLossMonitor {
-    fs::path det_dir;
-    fs::path csv_path;
-    std::ofstream f_csv;
-    size_t NxT, NyT, NzT;
-    size_t saveEvery;
-    real dt;
-    const GridSpacing* grid_ptr;
-
-    GainLossMonitor(
-        const fs::path& out_root, std::string det_name,
-        size_t NxT_, size_t NyT_, size_t NzT_,
-        size_t saveEvery_, real dt_,
-        const GridSpacing& grid
-    ) : det_dir(out_root / det_name),
-        NxT(NxT_), NyT(NyT_), NzT(NzT_),
-        saveEvery(saveEvery_), dt(dt_),
-        grid_ptr(&grid)
-    {
-        std::error_code ec;
-        fs::create_directories(det_dir, ec);
-
-        csv_path = det_dir / "gain_loss_time.csv";
-        f_csv.open(csv_path, std::ios::out);
-
-        if (f_csv) {
-            f_csv << "t, integrated_inversion, avg_inversion_density, "
-                  << "max_Nu_density, max_Ng_density, gain_available\n";
-        }
-        std::cout << "[GainLossMonitor] " << det_dir << "\n";
-    }
-
-    void record(size_t n, const TwoLevelState& state) {
-        if (n % saveEvery != 0) return;
-        if (!f_csv) return;
-
-        double integrated_inversion = 0.0;
-        double total_volume = 0.0;
-        double max_Nu = 0.0, max_Ng = 0.0;
-
-        for (size_t i = 0; i < NxT; ++i) {
-            for (size_t j = 0; j < NyT; ++j) {
-                for (size_t k = 0; k < NzT; ++k) {
-                    size_t id = idx3(i, j, k, NyT, NzT);
-                    if (state.Ndip[id] <= 0) continue;
-
-                    real dV = grid_ptr->dx[i] * grid_ptr->dy[j] * grid_ptr->dz[k];
-                    double inv_density = state.Nu[id] - state.Ng[id];
-                    integrated_inversion += inv_density * dV;
-                    total_volume += dV;
-                    max_Nu = std::max(max_Nu, static_cast<double>(state.Nu[id]));
-                    max_Ng = std::max(max_Ng, static_cast<double>(state.Ng[id]));
-                }
-            }
-        }
-
-        double avg_inv_density = (total_volume > 0) ? integrated_inversion / total_volume : 0.0;
-        bool gain_available = (integrated_inversion > 0);
-
-        real t = n * dt;
-        f_csv << std::setprecision(18) << t << ","
-              << integrated_inversion << "," << avg_inv_density << ","
-              << max_Nu << "," << max_Ng << ","
-              << (gain_available ? 1 : 0) << "\n";
-    }
-
-    ~GainLossMonitor() {
         if (f_csv) f_csv.close();
     }
 };
