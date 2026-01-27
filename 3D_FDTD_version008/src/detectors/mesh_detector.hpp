@@ -1,14 +1,4 @@
 // mesh_detector.hpp - 2D Mesh and refractive index detector
-//
-// This detector outputs:
-// 1. Refractive index distribution in a 2D slice
-// 2. Mesh grid information (cell boundaries and spacing)
-//
-// The output can be used to visualize the simulation geometry and mesh quality.
-//
-// Usage:
-//   auto det = Detectors::make_mesh_detector(config, grid_spacing, ...);
-//   det->save_mesh_and_index(n_grid);
 
 #pragma once
 
@@ -17,45 +7,32 @@
 
 namespace Detectors {
 
-// ==================== Mesh Detector Configuration ====================
 struct MeshDetectorConfig {
-    std::string name = "mesh_info";          // Output directory name
-
-    // Slice position (in physical coordinates, meters)
-    real slice_position = 0.0;               // Position along the normal axis
-
-    // Slice plane: 0 = XY (z=const), 1 = XZ (y=const), 2 = YZ (x=const)
-    int slice_plane = 0;
-
-    bool write_float64 = true;               // Output precision
-    bool export_mesh_lines = true;           // Export mesh line coordinates
-    bool export_spacing_arrays = true;       // Export dx, dy, dz arrays
+    std::string name = "mesh_info";
+    real slice_position = 0.0;       // Position along the normal axis (meters)
+    int slice_plane = 0;             // 0=XY (z=const), 1=XZ (y=const), 2=YZ (x=const)
+    bool write_float64 = true;
+    bool export_mesh_lines = true;
+    bool export_spacing_arrays = true;
 };
 
-// ==================== Mesh Detector ====================
 struct MeshDetector final : public IDetector {
     fs::path det_dir;
-
     std::size_t NxT{}, NyT{}, NzT{};
     std::size_t Nx_phys{}, Ny_phys{}, Nz_phys{}, npml{};
     std::size_t slice_index{};
-    int slice_plane{};  // 0=XY, 1=XZ, 2=YZ
-
+    int slice_plane{};
     GridSpacing grid_spacing;
     bool write_float64{true};
     bool export_mesh_lines{true};
     bool export_spacing_arrays{true};
-
-    // Physical coordinate information
     real pml_offset_x{}, pml_offset_y{}, pml_offset_z{};
     real slice_physical_coord{};
     real Lx_phys{}, Ly_phys{}, Lz_phys{};
-
     std::string detector_name{"MeshDetector"};
 
     MeshDetector() = default;
 
-    // Get slice plane name
     const char* slice_plane_name() const {
         switch (slice_plane) {
         case 0: return "XY";
@@ -65,7 +42,6 @@ struct MeshDetector final : public IDetector {
         return "Unknown";
     }
 
-    // Initialize the detector
     void initialize(const fs::path& out_root, const MeshDetectorConfig& config,
                     std::size_t NxT_, std::size_t NyT_, std::size_t NzT_,
                     std::size_t Nx_phys_, std::size_t Ny_phys_, std::size_t Nz_phys_,
@@ -85,27 +61,25 @@ struct MeshDetector final : public IDetector {
         export_spacing_arrays = config.export_spacing_arrays;
         Lx_phys = Lx_phys_; Ly_phys = Ly_phys_; Lz_phys = Lz_phys_;
 
-        // Calculate physical coordinate offsets
         pml_offset_x = grid.pml_offset_x();
         pml_offset_y = grid.pml_offset_y();
         pml_offset_z = grid.pml_offset_z();
 
-        // Convert slice position to index
         real slice_phys = config.slice_position;
         switch (slice_plane) {
-        case 0:  // XY plane
+        case 0:
             slice_phys -= domain_min_z;
             slice_index = grid.physical_to_index_z(slice_phys);
             slice_index = std::max(std::size_t(1), std::min(slice_index, NzT - 2));
             slice_physical_coord = grid.cell_center_physical_z(slice_index);
             break;
-        case 1:  // XZ plane
+        case 1:
             slice_phys -= domain_min_y;
             slice_index = grid.physical_to_index_y(slice_phys);
             slice_index = std::max(std::size_t(1), std::min(slice_index, NyT - 2));
             slice_physical_coord = grid.cell_center_physical_y(slice_index);
             break;
-        case 2:  // YZ plane
+        case 2:
             slice_phys -= domain_min_x;
             slice_index = grid.physical_to_index_x(slice_phys);
             slice_index = std::max(std::size_t(1), std::min(slice_index, NxT - 2));
@@ -123,7 +97,6 @@ struct MeshDetector final : public IDetector {
                   << " at index " << slice_index << ")\n";
     }
 
-    // Save refractive index slice
     void save_index_slice(const std::vector<real>& n_grid) {
         if (n_grid.size() != NxT * NyT * NzT) {
             std::cerr << "[ERR] n_grid size mismatch in MeshDetector.\n";
@@ -137,9 +110,8 @@ struct MeshDetector final : public IDetector {
             return;
         }
 
-        // Write 2D slice based on plane orientation
         switch (slice_plane) {
-        case 0:  // XY plane (z = const)
+        case 0:
             for (std::size_t i = 0; i < NxT; ++i) {
                 for (std::size_t j = 0; j < NyT; ++j) {
                     real v = n_grid[idx3(i, j, slice_index, NyT, NzT)];
@@ -147,7 +119,7 @@ struct MeshDetector final : public IDetector {
                 }
             }
             break;
-        case 1:  // XZ plane (y = const)
+        case 1:
             for (std::size_t i = 0; i < NxT; ++i) {
                 for (std::size_t k = 0; k < NzT; ++k) {
                     real v = n_grid[idx3(i, slice_index, k, NyT, NzT)];
@@ -155,7 +127,7 @@ struct MeshDetector final : public IDetector {
                 }
             }
             break;
-        case 2:  // YZ plane (x = const)
+        case 2:
             for (std::size_t j = 0; j < NyT; ++j) {
                 for (std::size_t k = 0; k < NzT; ++k) {
                     real v = n_grid[idx3(slice_index, j, k, NyT, NzT)];
@@ -168,30 +140,18 @@ struct MeshDetector final : public IDetector {
         std::cout << "[MeshDetector] Saved refractive index to " << out_path << "\n";
     }
 
-    // Save mesh grid information
     void save_mesh_info() {
-        // Write metadata JSON
         write_metadata();
-
-        // Write mesh lines if requested
-        if (export_mesh_lines) {
-            write_mesh_lines();
-        }
-
-        // Write spacing arrays if requested
-        if (export_spacing_arrays) {
-            write_spacing_arrays();
-        }
+        if (export_mesh_lines) write_mesh_lines();
+        if (export_spacing_arrays) write_spacing_arrays();
     }
 
-    // IDetector interface (not used for static mesh info)
     void record_after_E(std::size_t n, real dt,
         const std::vector<real>& Ex, const std::vector<real>& Ey, const std::vector<real>& Ez,
         const std::vector<real>& Hx, const std::vector<real>& Hy, const std::vector<real>& Hz) override
     {
         (void)n; (void)dt;
         (void)Ex; (void)Ey; (void)Ez; (void)Hx; (void)Hy; (void)Hz;
-        // Mesh detector is static - nothing to record during simulation
     }
 
     std::string name() const override { return detector_name; }
@@ -227,21 +187,20 @@ private:
         ofs << "  \"Lz_phys_m\": " << Lz_phys << ",\n";
         ofs << "  \"dtype\": \"" << (write_float64 ? "float64" : "float32") << "\",\n";
 
-        // Slice dimensions
         switch (slice_plane) {
-        case 0:  // XY
+        case 0:
             ofs << "  \"slice_dim1\": " << NxT << ",\n";
             ofs << "  \"slice_dim2\": " << NyT << ",\n";
             ofs << "  \"dim1_label\": \"x\",\n";
             ofs << "  \"dim2_label\": \"y\",\n";
             break;
-        case 1:  // XZ
+        case 1:
             ofs << "  \"slice_dim1\": " << NxT << ",\n";
             ofs << "  \"slice_dim2\": " << NzT << ",\n";
             ofs << "  \"dim1_label\": \"x\",\n";
             ofs << "  \"dim2_label\": \"z\",\n";
             break;
-        case 2:  // YZ
+        case 2:
             ofs << "  \"slice_dim1\": " << NyT << ",\n";
             ofs << "  \"slice_dim2\": " << NzT << ",\n";
             ofs << "  \"dim1_label\": \"y\",\n";
@@ -254,81 +213,56 @@ private:
     }
 
     void write_mesh_lines() {
-        // Write x cell boundaries
         {
             fs::path path = det_dir / "x_bounds.txt";
             std::ofstream ofs(path);
             ofs << std::setprecision(15);
             ofs << "# X cell boundaries (meters)\n";
-            for (const auto& x : grid_spacing.x_bounds) {
-                ofs << x << "\n";
-            }
+            for (const auto& x : grid_spacing.x_bounds) ofs << x << "\n";
         }
-
-        // Write y cell boundaries
         {
             fs::path path = det_dir / "y_bounds.txt";
             std::ofstream ofs(path);
             ofs << std::setprecision(15);
             ofs << "# Y cell boundaries (meters)\n";
-            for (const auto& y : grid_spacing.y_bounds) {
-                ofs << y << "\n";
-            }
+            for (const auto& y : grid_spacing.y_bounds) ofs << y << "\n";
         }
-
-        // Write z cell boundaries
         {
             fs::path path = det_dir / "z_bounds.txt";
             std::ofstream ofs(path);
             ofs << std::setprecision(15);
             ofs << "# Z cell boundaries (meters)\n";
-            for (const auto& z : grid_spacing.z_bounds) {
-                ofs << z << "\n";
-            }
+            for (const auto& z : grid_spacing.z_bounds) ofs << z << "\n";
         }
-
         std::cout << "[MeshDetector] Saved mesh line coordinates\n";
     }
 
     void write_spacing_arrays() {
-        // Write dx array
         {
             fs::path path = det_dir / "dx_array.txt";
             std::ofstream ofs(path);
             ofs << std::setprecision(15);
             ofs << "# dx spacing array (meters)\n";
-            for (const auto& dx : grid_spacing.dx) {
-                ofs << dx << "\n";
-            }
+            for (const auto& dx : grid_spacing.dx) ofs << dx << "\n";
         }
-
-        // Write dy array
         {
             fs::path path = det_dir / "dy_array.txt";
             std::ofstream ofs(path);
             ofs << std::setprecision(15);
             ofs << "# dy spacing array (meters)\n";
-            for (const auto& dy : grid_spacing.dy) {
-                ofs << dy << "\n";
-            }
+            for (const auto& dy : grid_spacing.dy) ofs << dy << "\n";
         }
-
-        // Write dz array
         {
             fs::path path = det_dir / "dz_array.txt";
             std::ofstream ofs(path);
             ofs << std::setprecision(15);
             ofs << "# dz spacing array (meters)\n";
-            for (const auto& dz : grid_spacing.dz) {
-                ofs << dz << "\n";
-            }
+            for (const auto& dz : grid_spacing.dz) ofs << dz << "\n";
         }
-
         std::cout << "[MeshDetector] Saved spacing arrays\n";
     }
 };
 
-// ==================== Factory function ====================
 inline std::unique_ptr<MeshDetector> make_mesh_detector(
     const fs::path& out_root,
     const MeshDetectorConfig& config,
