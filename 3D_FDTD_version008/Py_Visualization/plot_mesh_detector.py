@@ -66,12 +66,16 @@ def main():
                         help='Detector name (folder name, default: mesh_info)')
     parser.add_argument('--run-tag', type=str, default='3D_FDTD_v008_output',
                         help='Run tag (default: 3D_FDTD_v008_output)')
-    parser.add_argument('--show-grid', action='store_true',
-                        help='Show mesh grid lines')
-    parser.add_argument('--grid-color', type=str, default='white',
-                        help='Grid line color (default: white)')
-    parser.add_argument('--grid-alpha', type=float, default=0.3,
-                        help='Grid line transparency (default: 0.3)')
+    parser.add_argument('--show-grid', action='store_true', default=True,
+                        help='Show mesh grid lines (default: on)')
+    parser.add_argument('--no-grid', action='store_true',
+                        help='Hide mesh grid lines')
+    parser.add_argument('--grid-color', type=str, default='black',
+                        help='Grid line color (default: black)')
+    parser.add_argument('--grid-alpha', type=float, default=0.5,
+                        help='Grid line transparency (default: 0.5)')
+    parser.add_argument('--grid-width', type=float, default=0.8,
+                        help='Grid line width (default: 0.8)')
     parser.add_argument('--cmap', type=str, default='viridis',
                         help='Colormap (default: viridis)')
     parser.add_argument('--save', type=str, default=None,
@@ -138,8 +142,9 @@ def main():
     # Add colorbar
     cbar = plt.colorbar(im, ax=ax, label='Refractive Index n')
 
-    # Draw mesh grid if requested
-    if args.show_grid:
+    # Draw mesh grid (default: on, use --no-grid to disable)
+    show_grid = args.show_grid and not args.no_grid
+    if show_grid:
         # Vertical lines (constant x)
         vlines = [[(x, y_bounds[0]), (x, y_bounds[-1])] for x in x_bounds]
         # Horizontal lines (constant y)
@@ -147,7 +152,7 @@ def main():
 
         all_lines = vlines + hlines
         lc = LineCollection(all_lines, colors=args.grid_color,
-                           alpha=args.grid_alpha, linewidths=0.5)
+                           alpha=args.grid_alpha, linewidths=args.grid_width)
         ax.add_collection(lc)
 
     # Labels and title
