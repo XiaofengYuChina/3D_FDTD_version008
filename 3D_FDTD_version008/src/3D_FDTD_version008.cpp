@@ -179,7 +179,6 @@ int main() {
     const size_t kc = ctx.grid_spacing.physical_to_index_z(probe_z_rel);
 
     std::unique_ptr<PopulationTimeSeriesDetector> pop_detector;
-    std::unique_ptr<GainLossMonitor> gain_monitor;
     std::unique_ptr<PolarizationDiagnostics> pol_diagnostics;
     std::unique_ptr<TLSGlobalHistory> tls_global_history;
 
@@ -187,10 +186,6 @@ int main() {
         pop_detector = std::make_unique<PopulationTimeSeriesDetector>(
             out_root, "populations", NxT, NyT, NzT,
             P.saveEvery, P.nSteps, P.dt, ctx.grid_spacing);
-
-        gain_monitor = std::make_unique<GainLossMonitor>(
-            out_root, "gain_monitor", NxT, NyT, NzT,
-            P.saveEvery, P.dt, ctx.grid_spacing);
 
         pol_diagnostics = std::make_unique<PolarizationDiagnostics>(
             out_root, "polarization", NxT, NyT, NzT,
@@ -335,7 +330,6 @@ int main() {
             bool can_record = !use_parallel || (n % UserConfig::STABILITY_MONITOR_INTERVAL == 0) || (n % P.saveEvery == 0);
             if (can_record) {
                 if (pop_detector) pop_detector->record(n, tls_state);
-                if (gain_monitor) gain_monitor->record(n, tls_state);
                 if (pol_diagnostics) pol_diagnostics->record(n, tls_state, Ez, ctx.grid_spacing);
                 if (tls_global_history) tls_global_history->record(n, tls_state);
             }
@@ -386,6 +380,9 @@ int main() {
     }
 
     stability_monitor.print_summary();
+    if (pop_detector) {
+        pop_detector->finalize(tls_state);
+    }
     if (tls_global_history) {
         tls_global_history->finalize();
     }
