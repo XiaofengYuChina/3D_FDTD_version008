@@ -1,21 +1,18 @@
-// 3D_FDTD_version008.cpp — Main program
-//
-// This program simulates 3D electromagnetic wave propagation using FDTD
+// 3D_FDTD_version008.cpp - Main program for 3D FDTD electromagnetic simulation
 // with optional two-level atomic gain medium coupling.
-//
 // Configuration: Modify user_config.hpp to change simulation parameters.
 
-#include "user_config.hpp"          // User-configurable parameters (MODIFY THIS FILE)
-#include "params.hpp"               // Simulation parameter management (includes sources/detectors)
-#include "fdtd_stepper.hpp"         // FDTD update equations
-#include "boundary.hpp"             // Boundary conditions (PML)
-#include "structure_material.hpp"   // Materials and geometry
-#include "global_function.hpp"      // Utility functions and constants
-#include "omp_config.hpp"           // OpenMP configuration
-#include "two_level_system.hpp"     // Two-level gain medium
-#include "two_level_detectors.hpp"  // TLS diagnostics
-#include "stability_monitor.hpp"    // Numerical stability monitoring
-#include "parallel_domain_v2.hpp"   // Parallel domain decomposition (V2 - true domain decomposition)
+#include "user_config.hpp"
+#include "params.hpp"
+#include "fdtd_stepper.hpp"
+#include "boundary.hpp"
+#include "structure_material.hpp"
+#include "global_function.hpp"
+#include "omp_config.hpp"
+#include "two_level_system.hpp"
+#include "two_level_detectors.hpp"
+#include "stability_monitor.hpp"
+#include "parallel_domain_v2.hpp"
 
 #include <iostream>
 #include <vector>
@@ -37,7 +34,6 @@ int main() {
     std::cout << "OpenMP NOT enabled\n";
 #endif
 
-    // ===== 1. Initialize simulation parameters from UserConfig =====
     auto& P = Config::sim;
     P.finalize();
 
@@ -53,27 +49,21 @@ int main() {
     std::cout << "  Time steps: " << P.nSteps << "\n";
     std::cout << "  Mesh mode: " << (P.mesh_mode == Config::MeshMode::AUTO_NONUNIFORM ? "AUTO_NONUNIFORM" : "UNIFORM") << "\n\n";
 
-    // ===== 2. Register packages and build context =====
     Config::register_all_default_packages(P);
     Config::SimContext ctx = Config::make_context(P);
     Config::apply_structure_packages(ctx);
     Config::bake_and_bind(ctx, P, /*subpixel_samples=*/8);
 
-    // ===== 3. Initialize sources and detectors =====
     Config::Runtime rt;
     Config::apply_source_packages(ctx, rt);
     Config::apply_detector_packages(ctx, rt);
 
-    // ===== 4. Allocate field arrays =====
     const size_t NxT = ctx.NxT, NyT = ctx.NyT, NzT = ctx.NzT;
     const size_t Ntot = NxT * NyT * NzT;
     std::vector<real> Ex(Ntot, 0), Ey(Ntot, 0), Ez(Ntot, 0);
     std::vector<real> Hx(Ntot, 0), Hy(Ntot, 0), Hz(Ntot, 0);
     std::vector<real> Jx(Ntot, 0), Jy(Ntot, 0), Jz(Ntot, 0);
 
-    // ===== 4.5. Initialize Parallel Domain Decomposition V2 (if enabled) =====
-    // V2 uses TRUE domain decomposition: each subdomain has its own PML,
-    // only halo regions are exchanged (O(N²) per step, not O(N³))
     ParallelV2::DomainDecomposition domain_decomp;
     ParallelV2::ParallelConfig parallel_config;
     parallel_config.enabled = UserConfig::PARALLEL_ENABLED;
@@ -105,16 +95,11 @@ int main() {
         }
     }
 
-    // Flag to track if we're using parallel mode
     const bool use_parallel = domain_decomp.is_parallel();
 
-    // ===== 5. Initialize Two-Level System (STRUCTURE-BOUND TLS) =====
-    // TLS is now bound to structures! Each structure with has_tls=true gets its own TLS region.
-    TwoLevelParams tls_params;  // For backward compatibility (used by some diagnostics)
+    TwoLevelParams tls_params;
     TwoLevelState tls_state;
-    TLSRegionManager tls_manager;  // NEW: Manager for multi-region TLS
-
-    // Check if any structure has TLS enabled
+    TLSRegionManager tls_manager;
     bool any_tls_enabled = UserConfig::TLS_ENABLED && ctx.scene.has_any_tls();
 
     if (any_tls_enabled) {
@@ -122,35 +107,19 @@ int main() {
         std::cout << "Initializing Structure-Bound TLS\n";
         std::cout << "========================================\n";
 
-        // Allocate TLS state arrays
         tls_state.allocate(NxT, NyT, NzT);
-
-        // Get structures with TLS enabled
         auto tls_structures = ctx.scene.get_tls_structures();
         std::cout << "[TLS] Found " << tls_structures.size() << " structure(s) with TLS\n";
 
-        // Add each TLS structure as a region
         for (size_t idx = 0; idx < tls_structures.size(); ++idx) {
             const auto* item = tls_structures[idx];
             const auto& tls_cfg = item->tls_config;
-
-            // Get structure bounding box
             AABB bb = item->shape->bounding_box();
 
-            // Convert from total coordinates to physical coordinates
-            // (subtract PML offset since grid_spacing uses physical coords)
             real pml_x = ctx.grid_spacing.x_bounds[ctx.npml];
             real pml_y = ctx.grid_spacing.y_bounds[ctx.npml];
             real pml_z = ctx.grid_spacing.z_bounds[ctx.npml];
 
-            real x_min_phys = bb.x0 - pml_x;
-            real x_max_phys = bb.x1 - pml_x;
-            real y_min_phys = bb.y0 - pml_y;
-            real y_max_phys = bb.y1 - pml_y;
-            real z_min_phys = bb.z0 - pml_z;
-            real z_max_phys = bb.z1 - pml_z;
-
-            // Create TLS parameters for this region
             TwoLevelParams region_params;
             region_params.lambda0 = tls_cfg.lambda0;
             region_params.gamma = tls_cfg.gamma;
@@ -158,34 +127,23 @@ int main() {
             region_params.N0_total = tls_cfg.N0;
             region_params.enable_population_clamp = UserConfig::TLS_ENABLE_CLAMP;
 
-            // Add region to manager
             std::string region_name = "structure_" + std::to_string(idx);
             tls_manager.add_region_from_structure(
                 ctx.grid_spacing,
-                x_min_phys, x_max_phys,
-                y_min_phys, y_max_phys,
-                z_min_phys, z_max_phys,
+                bb.x0 - pml_x, bb.x1 - pml_x,
+                bb.y0 - pml_y, bb.y1 - pml_y,
+                bb.z0 - pml_z, bb.z1 - pml_z,
                 region_params,
-                tls_cfg.inversion_fraction,  // Pass inversion fraction
+                tls_cfg.inversion_fraction,
                 region_name
             );
         }
 
-        // Initialize all TLS regions
-        // This will set up Ndip, Nu, Ng, Ng0 for each region
         tls_manager.initialize(tls_state, ctx.grid_spacing);
-
-        // Finalize coefficients with dt
         tls_manager.finalize_with_dt(P.dt);
 
-        // For backward compatibility, also initialize tls_params with first region's params
         if (tls_manager.num_regions() > 0) {
             tls_params = tls_manager.regions[0].params;
-        }
-
-        // Update gain region bounds in tls_state for diagnostics
-        // Use the union of all regions
-        if (tls_manager.num_regions() > 0) {
             tls_state.gain_i0 = tls_manager.regions[0].i0;
             tls_state.gain_i1 = tls_manager.regions[0].i1;
             tls_state.gain_j0 = tls_manager.regions[0].j0;
@@ -203,7 +161,6 @@ int main() {
                 tls_state.gain_k1 = std::max(tls_state.gain_k1, region.k1);
             }
         }
-
         std::cout << "========================================\n\n";
     } else {
         if (!UserConfig::TLS_ENABLED) {
@@ -213,9 +170,7 @@ int main() {
         }
     }
 
-    // ===== 6. Initialize TLS detectors (if enabled) =====
     fs::path out_root = fs::path("frames") / P.run_tag;
-    // Calculate probe position indices from physical coordinates
     const real probe_x_rel = P.probe_x - P.domain_x_min;
     const real probe_y_rel = P.probe_y - P.domain_y_min;
     const real probe_z_rel = P.probe_z - P.domain_z_min;
@@ -229,46 +184,27 @@ int main() {
     std::unique_ptr<TLSGlobalHistory> tls_global_history;
 
     if (any_tls_enabled) {
-        // VOLUME DENSITY FORMULATION: Pass GridSpacing for proper integration
         pop_detector = std::make_unique<PopulationTimeSeriesDetector>(
-            out_root, "populations",
-            NxT, NyT, NzT,
-            P.saveEvery, P.nSteps, P.dt,
-            ctx.grid_spacing  // For density × dV integration
-        );
+            out_root, "populations", NxT, NyT, NzT,
+            P.saveEvery, P.nSteps, P.dt, ctx.grid_spacing);
 
         gain_monitor = std::make_unique<GainLossMonitor>(
-            out_root, "gain_monitor",
-            NxT, NyT, NzT,
-            P.saveEvery, P.dt,
-            ctx.grid_spacing  // For density × dV integration
-        );
+            out_root, "gain_monitor", NxT, NyT, NzT,
+            P.saveEvery, P.dt, ctx.grid_spacing);
 
         pol_diagnostics = std::make_unique<PolarizationDiagnostics>(
-            out_root, "polarization",
-            NxT, NyT, NzT,
-            ic, jc, kc,
-            P.saveEvery, P.dt
-        );
+            out_root, "polarization", NxT, NyT, NzT,
+            ic, jc, kc, P.saveEvery, P.dt);
 
-        // TLS Global History - uses gain bounds from tls_state (unified source)
         tls_global_history = std::make_unique<TLSGlobalHistory>(
-            out_root,
-            tls_state,           // Pass state to get gain bounds
-            ctx.grid_spacing,    // For density × dV integration
-            P.saveEvery,
-            P.dt,
-            false                // auto_plot disabled by default (portable)
-        );
+            out_root, tls_state, ctx.grid_spacing, P.saveEvery, P.dt, false);
 
         std::cout << "TLS detectors initialized (" << tls_manager.num_regions() << " region(s))\n";
     }
 
-    // ===== 7. Initialize stability monitor =====
     StabilityMonitor stability_monitor;
     stability_monitor.print_config();
 
-    // ===== 8. Main Time-Stepping Loop =====
     std::cout << "\n========================================\n";
     std::cout << "Starting FDTD Time-Stepping\n";
     if (use_parallel) {
@@ -284,14 +220,10 @@ int main() {
     }
     std::cout << "========================================\n\n";
 
-    // Timer for monitoring computation time per interval
     auto last_monitor_time = std::chrono::high_resolution_clock::now();
 
-    // Initial scatter for parallel mode (only done ONCE at start)
     if (use_parallel) {
         domain_decomp.initial_scatter(Ex, Ey, Ez, Hx, Hy, Hz);
-
-        // Initialize TLS in subdomains (if TLS enabled)
         if (any_tls_enabled) {
             domain_decomp.initialize_tls(tls_state);
             std::cout << "[ParallelV2] TLS will be computed locally in each subdomain\n";
@@ -301,17 +233,11 @@ int main() {
     }
 
     for (size_t n = 0; n < P.nSteps; ++n) {
-
-        // ==================== PARALLEL MODE V2 (True Domain Decomposition) ====================
-        // Each subdomain has its own PML, only halo regions exchanged per step
         if (use_parallel) {
-            // Step 1: Clear and inject source current into subdomains
             ParallelV2::parallel_clear_J(domain_decomp);
             for (auto& src : rt.sources) {
-                // Inject into global arrays first, then scatter to appropriate subdomain
                 src->inject_half_step(n, P.dt, Jx, Jy, Jz);
             }
-            // Copy source currents to subdomains
             for (auto& dom : domain_decomp.subdomains) {
                 for (size_t li = 0; li < dom.local_Nx; ++li) {
                     for (size_t lj = 0; lj < dom.local_Ny; ++lj) {
@@ -326,41 +252,25 @@ int main() {
                 }
             }
 
-            // Step 2: Update H-field in all subdomains (includes PML correction)
-            // Each subdomain handles its own PML internally
             ParallelV2::parallel_update_H(domain_decomp);
 
-            // Step 3: Update E-field in all subdomains (includes PML and TLS)
             if (any_tls_enabled) {
-                // TLS is computed locally in each subdomain - NO gather/scatter needed!
-                // Note: For parallel mode with multi-region TLS, we use the first region's params
-                // TODO: Full multi-region support in parallel mode
                 ParallelV2::parallel_update_E_with_tls(domain_decomp, P.dt, tls_params);
             } else {
                 ParallelV2::parallel_update_E(domain_decomp);
             }
 
-            // Step 4: Gather to global arrays only when needed for diagnostics/output
-            // This is ONLY for monitoring/output, NOT for computation!
             bool need_global_data = (n % UserConfig::STABILITY_MONITOR_INTERVAL == 0) ||
                                     (n % P.saveEvery == 0);
             if (need_global_data) {
                 domain_decomp.gather_fields_for_output(Ex, Ey, Ez, Hx, Hy, Hz);
-                // Also gather TLS state for diagnostics
                 if (any_tls_enabled) {
                     domain_decomp.gather_tls_for_output(tls_state);
                 }
-            }
-
-            // Callbacks (operate on global arrays)
-            if (need_global_data) {
                 rt.after_H(n, Ex, Ey, Ez, Hx, Hy, Hz);
                 rt.after_E(n, Ex, Ey, Ez, Hx, Hy, Hz);
             }
-
-        // ==================== SERIAL MODE ====================
         } else {
-            // Step 1: Inject source current
             std::fill(Jx.begin(), Jx.end(), 0.0);
             std::fill(Jy.begin(), Jy.end(), 0.0);
             std::fill(Jz.begin(), Jz.end(), 0.0);
@@ -368,21 +278,14 @@ int main() {
                 src->inject_half_step(n, P.dt, Jx, Jy, Jz);
             }
 
-            // Step 2: Update polarization (if TLS enabled)
             if (any_tls_enabled) {
-                // Use multi-region update for structure-bound TLS
                 update_polarization_multi_region(NxT, NyT, NzT, tls_manager, Ez, tls_state);
             }
 
-            // Step 3: Update H-field
             fdtd_update_H(
                 NxT, NyT, NzT,
-                ctx.grid_spacing.dx.data(),
-                ctx.grid_spacing.dy.data(),
-                ctx.grid_spacing.dz.data(),
-                ctx.grid_spacing.inv_dx.data(),
-                ctx.grid_spacing.inv_dy.data(),
-                ctx.grid_spacing.inv_dz.data(),
+                ctx.grid_spacing.dx.data(), ctx.grid_spacing.dy.data(), ctx.grid_spacing.dz.data(),
+                ctx.grid_spacing.inv_dx.data(), ctx.grid_spacing.inv_dy.data(), ctx.grid_spacing.inv_dz.data(),
                 ctx.mats.aHx.data(), ctx.mats.bHx.data(),
                 ctx.mats.aHy.data(), ctx.mats.bHy.data(),
                 ctx.mats.aHz.data(), ctx.mats.bHz.data(),
@@ -393,17 +296,11 @@ int main() {
             ctx.bc->apply_after_H(Ex, Ey, Ez, Hx, Hy, Hz);
             rt.after_H(n, Ex, Ey, Ez, Hx, Hy, Hz);
 
-            // Step 4: Update E-field
             if (any_tls_enabled) {
-                // With TLS: includes polarization source term -dP/dt
                 fdtd_update_E_with_gain(
                     NxT, NyT, NzT,
-                    ctx.grid_spacing.dx.data(),
-                    ctx.grid_spacing.dy.data(),
-                    ctx.grid_spacing.dz.data(),
-                    ctx.grid_spacing.inv_dx.data(),
-                    ctx.grid_spacing.inv_dy.data(),
-                    ctx.grid_spacing.inv_dz.data(),
+                    ctx.grid_spacing.dx.data(), ctx.grid_spacing.dy.data(), ctx.grid_spacing.dz.data(),
+                    ctx.grid_spacing.inv_dx.data(), ctx.grid_spacing.inv_dy.data(), ctx.grid_spacing.inv_dz.data(),
                     ctx.mats.aEx.data(), ctx.mats.bEx.data(),
                     ctx.mats.aEy.data(), ctx.mats.bEy.data(),
                     ctx.mats.aEz.data(), ctx.mats.bEz.data(),
@@ -413,15 +310,10 @@ int main() {
                     tls_state
                 );
             } else {
-                // Without TLS: standard E-field update
                 fdtd_update_E(
                     NxT, NyT, NzT,
-                    ctx.grid_spacing.dx.data(),
-                    ctx.grid_spacing.dy.data(),
-                    ctx.grid_spacing.dz.data(),
-                    ctx.grid_spacing.inv_dx.data(),
-                    ctx.grid_spacing.inv_dy.data(),
-                    ctx.grid_spacing.inv_dz.data(),
+                    ctx.grid_spacing.dx.data(), ctx.grid_spacing.dy.data(), ctx.grid_spacing.dz.data(),
+                    ctx.grid_spacing.inv_dx.data(), ctx.grid_spacing.inv_dy.data(), ctx.grid_spacing.inv_dz.data(),
                     ctx.mats.aEx.data(), ctx.mats.bEx.data(),
                     ctx.mats.aEy.data(), ctx.mats.bEy.data(),
                     ctx.mats.aEz.data(), ctx.mats.bEz.data(),
@@ -435,16 +327,11 @@ int main() {
             rt.after_E(n, Ex, Ey, Ez, Hx, Hy, Hz);
         }
 
-        // Step 5: Update populations (if TLS enabled)
-        // For parallel mode: populations already updated in parallel_update_E_with_tls
-        // For serial mode: update populations here using multi-region update
         if (any_tls_enabled && !use_parallel) {
             update_populations_multi_region(NxT, NyT, NzT, P.dt, tls_manager, Ez, tls_state);
         }
 
-        // Record TLS diagnostics (need global data which was gathered above)
         if (any_tls_enabled) {
-            // For parallel mode: only record when we have gathered data
             bool can_record = !use_parallel || (n % UserConfig::STABILITY_MONITOR_INTERVAL == 0) || (n % P.saveEvery == 0);
             if (can_record) {
                 if (pop_detector) pop_detector->record(n, tls_state);
@@ -454,10 +341,8 @@ int main() {
             }
         }
 
-        // Stability check every STABILITY_MONITOR_INTERVAL steps
         if (n % UserConfig::STABILITY_MONITOR_INTERVAL == 0) {
             real conservation_error = stability_monitor.calculate_conservation_error(tls_state);
-
             bool stable = stability_monitor.check_stability(
                 n, Ex, Ey, Ez, Hx, Hy, Hz, tls_state, conservation_error
             );
@@ -468,17 +353,14 @@ int main() {
                 return 1;
             }
 
-            // Calculate elapsed time since last monitor
             auto current_time = std::chrono::high_resolution_clock::now();
             double elapsed_seconds = std::chrono::duration<double>(current_time - last_monitor_time).count();
             last_monitor_time = current_time;
 
-            // Progress output
             real max_E = stability_monitor.get_max_E(Ex, Ey, Ez);
 
             if (any_tls_enabled) {
                 real max_P = NumericUtils::max_abs(tls_state.Pz);
-                // VOLUME DENSITY FORMULATION: Use integrated functions
                 real total_Nu = compute_integrated_Nu(tls_state, ctx.grid_spacing);
                 real total_Ng = compute_integrated_Ng(tls_state, ctx.grid_spacing);
                 real inversion = total_Nu - total_Ng;
@@ -497,18 +379,13 @@ int main() {
             }
         }
 
-        // Save progress indicator (using probe position)
         if (n % P.saveEvery == 0 && n % UserConfig::STABILITY_MONITOR_INTERVAL != 0) {
-            // Use probe position for progress output
             std::cout << "step " << n << " | Ez(probe) = "
                       << std::scientific << Ez[idx3(ic, jc, kc, NyT, NzT)] << std::fixed << "\n";
         }
     }
 
-    // ===== 9. Finalization =====
     stability_monitor.print_summary();
-
-    // Finalize TLS global history (generate plots)
     if (tls_global_history) {
         tls_global_history->finalize();
     }

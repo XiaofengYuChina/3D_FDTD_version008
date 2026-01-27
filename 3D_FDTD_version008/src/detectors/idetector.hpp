@@ -1,7 +1,4 @@
 // idetector.hpp - Detector interface and common definitions
-//
-// This file defines the base interface for all electromagnetic field detectors
-// in the FDTD simulation.
 
 #pragma once
 
@@ -19,20 +16,18 @@ namespace fs = std::filesystem;
 
 namespace Detectors {
 
-// ==================== Field component selection ====================
 enum class FieldComponent {
-    Ex, Ey, Ez,    // Electric field components
-    Hx, Hy, Hz,    // Magnetic field components
-    E_magnitude,   // |E| = sqrt(Ex^2 + Ey^2 + Ez^2)
-    H_magnitude,   // |H| = sqrt(Hx^2 + Hy^2 + Hz^2)
-    Sx, Sy, Sz,    // Poynting vector components
-    S_magnitude,   // |S| magnitude
-    Energy_E,      // Electric energy density
-    Energy_H,      // Magnetic energy density
-    Energy_total   // Total energy density
+    Ex, Ey, Ez,
+    Hx, Hy, Hz,
+    E_magnitude,
+    H_magnitude,
+    Sx, Sy, Sz,
+    S_magnitude,
+    Energy_E,
+    Energy_H,
+    Energy_total
 };
 
-// Convert FieldComponent to string
 inline const char* field_component_name(FieldComponent fc) {
     switch (fc) {
     case FieldComponent::Ex: return "Ex";
@@ -54,16 +49,13 @@ inline const char* field_component_name(FieldComponent fc) {
     return "Unknown";
 }
 
-// ==================== Detector interface ====================
 struct IDetector {
     virtual ~IDetector() = default;
 
-    // Called after E-field update
     virtual void record_after_E(std::size_t n, real dt,
         const std::vector<real>& Ex, const std::vector<real>& Ey, const std::vector<real>& Ez,
         const std::vector<real>& Hx, const std::vector<real>& Hy, const std::vector<real>& Hz) = 0;
 
-    // Called after H-field update (optional, default does nothing)
     virtual void record_after_H(std::size_t n, real dt,
         const std::vector<real>& Ex, const std::vector<real>& Ey, const std::vector<real>& Ez,
         const std::vector<real>& Hx, const std::vector<real>& Hy, const std::vector<real>& Hz) {
@@ -72,25 +64,18 @@ struct IDetector {
         (void)Hx; (void)Hy; (void)Hz;
     }
 
-    // Get detector name for logging
     virtual std::string name() const { return "IDetector"; }
-
-    // Finalize (called at end of simulation)
     virtual void finalize() {}
 };
 
-// ==================== Common detector configuration ====================
 struct DetectorConfig {
-    std::string name = "detector";           // Detector name (used for output directory)
-    std::size_t save_every = 1;              // Save every N steps
-    std::size_t n_steps = 0;                 // Total simulation steps (for metadata)
-    bool write_float64 = true;               // true = double, false = float
-    std::string frame_pattern = "frame_%04d.raw";  // Output file pattern
+    std::string name = "detector";
+    std::size_t save_every = 1;
+    std::size_t n_steps = 0;
+    bool write_float64 = true;
+    std::string frame_pattern = "frame_%04d.raw";
 };
 
-// ==================== Utility functions ====================
-
-// Extract field value at a grid point
 inline real get_field_value(FieldComponent component, std::size_t idx,
     const std::vector<real>& Ex, const std::vector<real>& Ey, const std::vector<real>& Ez,
     const std::vector<real>& Hx, const std::vector<real>& Hy, const std::vector<real>& Hz)
@@ -123,7 +108,6 @@ inline real get_field_value(FieldComponent component, std::size_t idx,
     }
 }
 
-// Write binary value (float32 or float64)
 inline void write_binary_value(std::ofstream& ofs, real value, bool write_float64) {
     if (write_float64) {
         double v = static_cast<double>(value);
@@ -134,7 +118,6 @@ inline void write_binary_value(std::ofstream& ofs, real value, bool write_float6
     }
 }
 
-// Create output directory safely
 inline bool create_detector_directory(const fs::path& dir) {
     std::error_code ec;
     fs::create_directories(dir, ec);

@@ -1,18 +1,4 @@
 // field_movie_2d.hpp - 2D field movie detector
-//
-// Records 2D slices of electromagnetic field components over time,
-// creating a "movie" of the field evolution.
-//
-// Features:
-// - Select any field component (Ex, Ey, Ez, Hx, Hy, Hz, magnitudes, etc.)
-// - Choose slice plane (XY, XZ, YZ)
-// - Configurable save interval
-// - Outputs binary frames with JSON metadata
-//
-// Usage:
-//   auto det = Detectors::make_field_movie_2d(config, grid_spacing, ...);
-//   // In simulation loop:
-//   det->record_after_E(n, dt, Ex, Ey, Ez, Hx, Hy, Hz);
 
 #pragma once
 
@@ -22,40 +8,32 @@
 
 namespace Detectors {
 
-// ==================== Field Movie 2D Configuration ====================
 struct FieldMovie2DConfig {
-    std::string name = "field_movie";        // Output directory name
-    FieldComponent component = FieldComponent::Ez;  // Field component to record
-    int slice_plane = 0;                     // 0=XY, 1=XZ, 2=YZ
-    real slice_position = 0.0;               // Position in physical coords (m)
-    std::size_t save_every = 1;              // Save every N steps
-    std::size_t n_steps = 0;                 // Total steps (for metadata)
-    bool write_float64 = true;               // Output precision
+    std::string name = "field_movie";
+    FieldComponent component = FieldComponent::Ez;
+    int slice_plane = 0;             // 0=XY, 1=XZ, 2=YZ
+    real slice_position = 0.0;       // Position in physical coords (meters)
+    std::size_t save_every = 1;
+    std::size_t n_steps = 0;
+    bool write_float64 = true;
     std::string frame_pattern = "frame_%04d.raw";
 };
 
-// ==================== Field Movie 2D Detector ====================
 struct FieldMovie2D final : public IDetector {
     fs::path det_dir;
-
     std::size_t NxT{}, NyT{}, NzT{};
     std::size_t slice_index{};
     int slice_plane{};
     FieldComponent component{FieldComponent::Ez};
-
     std::size_t save_every{1};
     std::size_t n_steps{0};
     std::size_t frame_id{0};
-
     bool write_float64{true};
     std::string frame_pattern{"frame_%04d.raw"};
-
-    // Physical coordinate information
     real pml_offset_x{}, pml_offset_y{}, pml_offset_z{};
     real slice_physical_coord{};
     std::size_t Nx_phys{}, Ny_phys{}, Nz_phys{}, npml{};
     real Lx_phys{}, Ly_phys{}, Lz_phys{};
-
     std::string detector_name{"FieldMovie2D"};
 
     FieldMovie2D() = default;
@@ -93,22 +71,21 @@ struct FieldMovie2D final : public IDetector {
         pml_offset_y = grid.pml_offset_y();
         pml_offset_z = grid.pml_offset_z();
 
-        // Convert slice position to index
         real slice_phys = config.slice_position;
         switch (slice_plane) {
-        case 0:  // XY plane
+        case 0:
             slice_phys -= domain_min_z;
             slice_index = grid.physical_to_index_z(slice_phys);
             slice_index = std::max(std::size_t(1), std::min(slice_index, NzT - 2));
             slice_physical_coord = grid.cell_center_physical_z(slice_index);
             break;
-        case 1:  // XZ plane
+        case 1:
             slice_phys -= domain_min_y;
             slice_index = grid.physical_to_index_y(slice_phys);
             slice_index = std::max(std::size_t(1), std::min(slice_index, NyT - 2));
             slice_physical_coord = grid.cell_center_physical_y(slice_index);
             break;
-        case 2:  // YZ plane
+        case 2:
             slice_phys -= domain_min_x;
             slice_index = grid.physical_to_index_x(slice_phys);
             slice_index = std::max(std::size_t(1), std::min(slice_index, NxT - 2));
@@ -145,9 +122,8 @@ struct FieldMovie2D final : public IDetector {
             return;
         }
 
-        // Write 2D slice
         switch (slice_plane) {
-        case 0:  // XY plane
+        case 0:
             for (std::size_t i = 0; i < NxT; ++i) {
                 for (std::size_t j = 0; j < NyT; ++j) {
                     std::size_t idx = idx3(i, j, slice_index, NyT, NzT);
@@ -156,7 +132,7 @@ struct FieldMovie2D final : public IDetector {
                 }
             }
             break;
-        case 1:  // XZ plane
+        case 1:
             for (std::size_t i = 0; i < NxT; ++i) {
                 for (std::size_t k = 0; k < NzT; ++k) {
                     std::size_t idx = idx3(i, slice_index, k, NyT, NzT);
@@ -165,7 +141,7 @@ struct FieldMovie2D final : public IDetector {
                 }
             }
             break;
-        case 2:  // YZ plane
+        case 2:
             for (std::size_t j = 0; j < NyT; ++j) {
                 for (std::size_t k = 0; k < NzT; ++k) {
                     std::size_t idx = idx3(slice_index, j, k, NyT, NzT);
@@ -211,7 +187,6 @@ private:
         ofs << "  \"Lz_phys_m\": " << Lz_phys << ",\n";
         ofs << "  \"dtype\": \"" << (write_float64 ? "float64" : "float32") << "\",\n";
 
-        // Slice dimensions
         switch (slice_plane) {
         case 0:
             ofs << "  \"slice_dim1\": " << NxT << ",\n";
@@ -238,7 +213,6 @@ private:
     }
 };
 
-// ==================== Factory function ====================
 inline std::unique_ptr<FieldMovie2D> make_field_movie_2d(
     const fs::path& out_root,
     const FieldMovie2DConfig& config,

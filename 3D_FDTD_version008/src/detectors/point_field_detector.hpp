@@ -1,17 +1,4 @@
 // point_field_detector.hpp - Point field time series detector
-//
-// Records the time evolution of electromagnetic field components at a single
-// spatial point. Useful for monitoring field amplitude at specific locations.
-//
-// Features:
-// - Select any field component (Ex, Ey, Ez, Hx, Hy, Hz, etc.)
-// - Multiple components can be recorded simultaneously
-// - Outputs binary time series with JSON metadata
-//
-// Usage:
-//   auto det = Detectors::make_point_field_detector(config, grid_spacing, ...);
-//   // In simulation loop:
-//   det->record_after_E(n, dt, Ex, Ey, Ez, Hx, Hy, Hz);
 
 #pragma once
 
@@ -20,43 +7,27 @@
 
 namespace Detectors {
 
-// ==================== Point Field Detector Configuration ====================
 struct PointFieldDetectorConfig {
-    std::string name = "point_probe";        // Output directory name
-
-    // Position in physical coordinates (meters)
-    real x = 0.0;
-    real y = 0.0;
-    real z = 0.0;
-
-    // Field components to record
+    std::string name = "point_probe";
+    real x = 0.0, y = 0.0, z = 0.0;  // Position in physical coordinates (meters)
     std::vector<FieldComponent> components = {FieldComponent::Ez};
-
-    std::size_t save_every = 1;              // Save every N steps
-    std::size_t n_steps = 0;                 // Total steps (for metadata)
-    bool write_float64 = true;               // Output precision
+    std::size_t save_every = 1;
+    std::size_t n_steps = 0;
+    bool write_float64 = true;
 };
 
-// ==================== Point Field Detector ====================
 struct PointFieldDetector final : public IDetector {
     fs::path det_dir;
-
     std::size_t NxT{}, NyT{}, NzT{};
-    std::size_t i0{}, j0{}, k0{};            // Grid indices
-
+    std::size_t i0{}, j0{}, k0{};
     std::vector<FieldComponent> components;
     std::vector<std::ofstream> output_files;
-
     std::size_t save_every{1};
     std::size_t n_steps{0};
     real dt_sim{0};
-
     bool write_float64{true};
-
-    // Physical coordinate information
     real probe_x_physical{}, probe_y_physical{}, probe_z_physical{};
     real pml_offset_x{}, pml_offset_y{}, pml_offset_z{};
-
     std::string detector_name{"PointFieldDetector"};
 
     PointFieldDetector() = default;
@@ -86,7 +57,6 @@ struct PointFieldDetector final : public IDetector {
         pml_offset_y = grid.pml_offset_y();
         pml_offset_z = grid.pml_offset_z();
 
-        // Convert physical coordinates to grid indices
         real phys_x = config.x - domain_min_x;
         real phys_y = config.y - domain_min_y;
         real phys_z = config.z - domain_min_z;
@@ -95,19 +65,16 @@ struct PointFieldDetector final : public IDetector {
         j0 = grid.physical_to_index_y(phys_y);
         k0 = grid.physical_to_index_z(phys_z);
 
-        // Clamp to valid range
         i0 = std::max(std::size_t(1), std::min(i0, NxT - 2));
         j0 = std::max(std::size_t(1), std::min(j0, NyT - 2));
         k0 = std::max(std::size_t(1), std::min(k0, NzT - 2));
 
-        // Get actual physical coordinates at computed indices
         probe_x_physical = grid.cell_center_physical_x(i0);
         probe_y_physical = grid.cell_center_physical_y(j0);
         probe_z_physical = grid.cell_center_physical_z(k0);
 
         create_detector_directory(det_dir);
 
-        // Open output files for each component
         output_files.resize(components.size());
         for (std::size_t c = 0; c < components.size(); ++c) {
             std::string filename = std::string(field_component_name(components[c])) + "_ts.bin";
@@ -149,7 +116,6 @@ struct PointFieldDetector final : public IDetector {
         if (n % save_every != 0) return;
 
         std::size_t idx = idx3(i0, j0, k0, NyT, NzT);
-
         for (std::size_t c = 0; c < components.size(); ++c) {
             if (!output_files[c]) continue;
             real v = get_field_value(components[c], idx, Ex, Ey, Ez, Hx, Hy, Hz);
@@ -213,7 +179,6 @@ private:
     }
 };
 
-// ==================== Factory function ====================
 inline std::unique_ptr<PointFieldDetector> make_point_field_detector(
     const fs::path& out_root,
     const PointFieldDetectorConfig& config,
@@ -229,7 +194,6 @@ inline std::unique_ptr<PointFieldDetector> make_point_field_detector(
     return det;
 }
 
-// ==================== Convenience: Single component probe ====================
 inline std::unique_ptr<PointFieldDetector> make_simple_probe(
     const fs::path& out_root,
     const std::string& name,

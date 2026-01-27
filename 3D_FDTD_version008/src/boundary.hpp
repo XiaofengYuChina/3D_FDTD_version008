@@ -13,17 +13,15 @@
 
 #include "global_function.hpp"
 
-// === Only two types ===
 enum class BcType { PEC, CPML_RC };
 
-// === CPML common configuration ===
 struct CPMLConfig {
-    int   npml = 8;            // Thickness (cells)
-    real  m = 3.0;             // σ/κ polynomial order
-    real  Rerr = 1e-10;        // Target reflection
-    real  alpha0 = 0.05;       // α0 ~ (c0/Δs)*0~0.2
-    real  kappa_max = 8.0;     // κ_max 6~12
-    bool  alpha_linear = true; // α linear distribution
+    int npml = 8;
+    real m = 3.0;
+    real Rerr = 1e-10;
+    real alpha0 = 0.05;
+    real kappa_max = 8.0;
+    bool alpha_linear = true;
 };
 
 struct BoundaryParams {
@@ -31,35 +29,25 @@ struct BoundaryParams {
     CPMLConfig cpml;
 };
 
-// === Boundary interface ===
 struct IBoundary {
     virtual ~IBoundary() = default;
-
-    // PML correction called after main core update
     virtual void apply_after_H(
         std::vector<real>& Ex, std::vector<real>& Ey, std::vector<real>& Ez,
         std::vector<real>& Hx, std::vector<real>& Hy, std::vector<real>& Hz) {
         (void)Ex; (void)Ey; (void)Ez; (void)Hx; (void)Hy; (void)Hz;
     }
-
     virtual void apply_after_E(
         std::vector<real>& Ex, std::vector<real>& Ey, std::vector<real>& Ez,
         std::vector<real>& Hx, std::vector<real>& Hy, std::vector<real>& Hz) = 0;
-
-    // To make PML increment scaling consistent with main core, bind MaterialGrids' bE/bH (optional)
     virtual void bind_material_coeffs(
         const std::vector<real>*, const std::vector<real>*, const std::vector<real>*,
-        const std::vector<real>*, const std::vector<real>*, const std::vector<real>*) {
-    }
-
-    // Dimensions
+        const std::vector<real>*, const std::vector<real>*, const std::vector<real>*) {}
     virtual size_t NxT() const = 0;
     virtual size_t NyT() const = 0;
     virtual size_t NzT() const = 0;
     virtual size_t npml() const = 0;
 };
 
-// === PEC boundary ===
 struct PECBoundary final : public IBoundary {
     size_t Nx_, Ny_, Nz_;
     explicit PECBoundary(size_t Nx, size_t Ny, size_t Nz) : Nx_(Nx), Ny_(Ny), Nz_(Nz) {}
@@ -90,59 +78,38 @@ struct PECBoundary final : public IBoundary {
     size_t npml() const override { return 0; }
 };
 
-// === RC-CPML boundary ===
 struct CPMLBoundary final : public IBoundary {
-
-    // Core & total dimensions
     size_t NxC_, NyC_, NzC_;
-    int    npml_;
+    int npml_;
     size_t NxT_, NyT_, NzT_;
-
-    // Dimensions/constants
-    real /*dx_, dy_, dz_,*/ dt_, eps0_, mu0_, c0_;
-    // Spacing arrays
+    real dt_, eps0_, mu0_, c0_;
     std::vector<real> dx_array_, dy_array_, dz_array_;
-    
-    // 1D profiles
     std::vector<real> kx_, ky_, kz_;
     std::vector<real> sx_, sy_, sz_;
     std::vector<real> ax_, ay_, az_;
-
-    // Single-pole coefficients and ψ (6 derivatives each for E/H, total 12 ψ)
     std::vector<real> bEx_, cEx_, bEy_, cEy_, bEz_, cEz_;
     std::vector<real> bHx_, cHx_, bHy_, cHy_, bHz_, cHz_;
-
     std::vector<real> psi_Ex_y_, psi_Ex_z_;
     std::vector<real> psi_Ey_z_, psi_Ey_x_;
     std::vector<real> psi_Ez_x_, psi_Ez_y_;
     std::vector<real> psi_Hx_y_, psi_Hx_z_;
     std::vector<real> psi_Hy_z_, psi_Hy_x_;
     std::vector<real> psi_Hz_x_, psi_Hz_y_;
-
-    // Bind main core bE/bH (nullable, falls back to dt/eps0 or dt/mu0 if null)
-    const std::vector<real>* bEx_mg_{ nullptr };
-    const std::vector<real>* bEy_mg_{ nullptr };
-    const std::vector<real>* bEz_mg_{ nullptr };
-    const std::vector<real>* bHx_mg_{ nullptr };
-    const std::vector<real>* bHy_mg_{ nullptr };
-    const std::vector<real>* bHz_mg_{ nullptr };
+    const std::vector<real>* bEx_mg_{nullptr};
+    const std::vector<real>* bEy_mg_{nullptr};
+    const std::vector<real>* bEz_mg_{nullptr};
+    const std::vector<real>* bHx_mg_{nullptr};
+    const std::vector<real>* bHy_mg_{nullptr};
+    const std::vector<real>* bHz_mg_{nullptr};
 
     CPMLBoundary(size_t NxCore, size_t NyCore, size_t NzCore,
-        // real dx, real dy, real dz, 
-        const GridSpacing& grid_spacing,  // CHANGED: Pass full spacing
-        real dt, real eps0, real mu0, real c0,
+        const GridSpacing& grid_spacing, real dt, real eps0, real mu0, real c0,
         const CPMLConfig& cfg)
-
         : NxC_(NxCore), NyC_(NyCore), NzC_(NzCore),
-        npml_(cfg.npml),
-        NxT_(NxCore + 2 * cfg.npml),
-        NyT_(NyCore + 2 * cfg.npml),
-        NzT_(NzCore + 2 * cfg.npml),
-        // dx_(dx), dy_(dy), dz_(dz), deleted
-        dt_(dt), eps0_(eps0), mu0_(mu0), c0_(c0)
+          npml_(cfg.npml),
+          NxT_(NxCore + 2 * cfg.npml), NyT_(NyCore + 2 * cfg.npml), NzT_(NzCore + 2 * cfg.npml),
+          dt_(dt), eps0_(eps0), mu0_(mu0), c0_(c0)
     {
-
-        // Store spacing
         dx_array_ = grid_spacing.dx;
         dy_array_ = grid_spacing.dy;
         dz_array_ = grid_spacing.dz;
@@ -165,9 +132,7 @@ struct CPMLBoundary final : public IBoundary {
         psi_Hx_y_.assign(N, 0.0); psi_Hx_z_.assign(N, 0.0);
         psi_Hy_z_.assign(N, 0.0); psi_Hy_x_.assign(N, 0.0);
         psi_Hz_x_.assign(N, 0.0); psi_Hz_y_.assign(N, 0.0);
-
         build_profiles_and_coeffs(cfg);
-
     }
 
     void bind_material_coeffs(
@@ -182,7 +147,6 @@ struct CPMLBoundary final : public IBoundary {
     size_t NzT() const override { return NzT_; }
     size_t npml() const override { return size_t(npml_); }
 
-    // === Correction after H ===
     void apply_after_H(
         std::vector<real>& Ex, std::vector<real>& Ey, std::vector<real>& Ez,
         std::vector<real>& Hx, std::vector<real>& Hy, std::vector<real>& Hz) override
@@ -215,7 +179,6 @@ struct CPMLBoundary final : public IBoundary {
                     const real inv_dy = 1.0 / dy_array_[j];
                     const real inv_dz = 1.0 / dz_array_[k];
 
-                    // Hx: dEz/dy and dEy/dz
                     if (in_pml_y(j)) {
                         real d = diff_y(Ezp, id, sJ, inv_dy);
                         real corr = d / ky_[j];
@@ -230,8 +193,6 @@ struct CPMLBoundary final : public IBoundary {
                         const real bh = bHx_mg_ ? (*bHx_mg_)[id] : (dt_ / mu0_);
                         Hx[id] -= bh * (-(corr - d));
                     }
-
-                    // Hy: dEx/dz and dEz/dx
                     if (in_pml_z(k)) {
                         real d = diff_z(Exp, id, sK, inv_dz);
                         real corr = d / kz_[k];
@@ -246,8 +207,6 @@ struct CPMLBoundary final : public IBoundary {
                         const real bh = bHy_mg_ ? (*bHy_mg_)[id] : (dt_ / mu0_);
                         Hy[id] -= bh * (-(corr - d));
                     }
-
-                    // Hz: dEy/dx and dEx/dy
                     if (in_pml_x(i)) {
                         real d = diff_x(Eyp, id, sI, inv_dx);
                         real corr = d / kx_[i];
@@ -265,7 +224,6 @@ struct CPMLBoundary final : public IBoundary {
                 }
     }
 
-    // === Correction after E ===
     void apply_after_E(
         std::vector<real>& Ex, std::vector<real>& Ey, std::vector<real>& Ez,
         std::vector<real>& Hx, std::vector<real>& Hy, std::vector<real>& Hz) override
@@ -296,7 +254,6 @@ struct CPMLBoundary final : public IBoundary {
                     const real inv_dy = 1.0 / dy_array_[j];
                     const real inv_dz = 1.0 / dz_array_[k];
 
-                    // Ex: dHz/dy, dHy/dz
                     if (in_pml_y(j)) {
                         real d = diff_ym(Hzp, id, sJ, inv_dy);
                         real corr = d / ky_[j];
@@ -311,8 +268,6 @@ struct CPMLBoundary final : public IBoundary {
                         const real be = bEx_mg_ ? (*bEx_mg_)[id] : (dt_ / eps0_);
                         Ex[id] += be * (-(corr - d));
                     }
-
-                    // Ey: dHx/dz, dHz/dx
                     if (in_pml_z(k)) {
                         real d = diff_zm(Hxp, id, sK, inv_dz);
                         real corr = d / kz_[k];
@@ -327,8 +282,6 @@ struct CPMLBoundary final : public IBoundary {
                         const real be = bEy_mg_ ? (*bEy_mg_)[id] : (dt_ / eps0_);
                         Ey[id] += be * (-(corr - d));
                     }
-
-                    // Ez: dHy/dx, dHx/dy
                     if (in_pml_x(i)) {
                         real d = diff_xm(Hyp, id, sI, inv_dx);
                         real corr = d / kx_[i];
@@ -347,10 +300,7 @@ struct CPMLBoundary final : public IBoundary {
     }
 
 private:
-    // MODIFY: build_profiles_and_coeffs uses local spacing
     void build_profiles_and_coeffs(const CPMLConfig& cfg) {
-        // σ_max calculation now needs to account for varying spacing
-        // Option 1: Use average spacing in PML region
         auto avg_pml_spacing = [&](const std::vector<real>& spacing, int N) {
             real sum = 0;
             int count = 0;
@@ -380,13 +330,10 @@ private:
                 for (int n = 0; n < N; ++n) {
                     int d = std::min(n, N - 1 - n);
                     if (d >= npml) { s[n] = 0.0; k[n] = 1.0; a[n] = 0.0; continue; }
-
-                    real r = real(npml - (d + 0.5)) / real(npml);  // (0,1]
+                    real r = real(npml - (d + 0.5)) / real(npml);
                     real rm = std::pow(r, cfg.m);
-                    real kap = 1.0 + (cfg.kappa_max - 1.0) * rm;     // κ(n)
+                    real kap = 1.0 + (cfg.kappa_max - 1.0) * rm;
                     real sig = smax * kap * rm;
-
-                    // CHANGED: Use local spacing for alpha
                     real ds_local = spacing_arr[n];
                     real alf = cfg.alpha_linear ? (cfg.alpha0 * (c0_ / ds_local) * (1.0 - r))
                                                 : (cfg.alpha0 * (c0_ / ds_local) * std::pow(1.0 - r, cfg.m));
@@ -398,23 +345,16 @@ private:
         fill_1d((int)NyT_, npml_, symax, dy_array_, sy_, ky_, ay_);
         fill_1d((int)NzT_, npml_, szmax, dz_array_, sz_, kz_, az_);
 
-        auto build_bc = [&](    const std::vector<real>& s,
-                                const std::vector<real>& k,
-                                const std::vector<real>& a,
-                                real norm,                      // ★ Electric side pass ε0_, magnetic side pass μ0_
-                                std::vector<real>& b,
-                                std::vector<real>& c    ) {
+        auto build_bc = [&](const std::vector<real>& s, const std::vector<real>& k,
+                            const std::vector<real>& a, real norm,
+                            std::vector<real>& b, std::vector<real>& c) {
                 int N = (int)s.size();
                 for (int n = 0; n < N; ++n) {
-
-                    // Normalized σ (unit 1/s)
                     real sig_n = s[n] / norm;
                     real kap = k[n];
                     real alf = a[n];
-
-                    real be = std::exp(-(sig_n / kap + alf) * dt_);    // Recursive coefficient
+                    real be = std::exp(-(sig_n / kap + alf) * dt_);
                     be = std::max<real>(be, 1e-30);
-
                     real ce = 0.0;
                     if (std::abs(sig_n) > 1e-30 || std::abs(alf) > 1e-30) {
                         ce = (sig_n * (be - 1.0)) / (kap * (sig_n + kap * alf));
@@ -430,11 +370,9 @@ private:
         build_bc(sx_, kx_, ax_, mu0_, bHx_, cHx_);
         build_bc(sy_, ky_, ay_, mu0_, bHy_, cHy_);
         build_bc(sz_, kz_, az_, mu0_, bHz_, cHz_);
-
     }
 };
 
-// === Factory ===
 inline std::unique_ptr<IBoundary> make_boundary(
     const BoundaryParams& params,
     size_t NxCore, size_t NyCore, size_t NzCore,
