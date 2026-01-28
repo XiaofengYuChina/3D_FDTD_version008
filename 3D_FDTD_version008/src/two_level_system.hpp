@@ -432,9 +432,11 @@ struct TLSRegion {
         if (!(i >= i0 && i < i1 && j >= j0 && j < j1 && k >= k0 && k < k1))
             return false;
         if (shape) {
-            real x = grid.cell_center_physical_x(i);
-            real y = grid.cell_center_physical_y(j);
-            real z = grid.cell_center_physical_z(k);
+            // Shape coordinates are in total domain space (including PML offset),
+            // so use total domain cell centers from x_bounds directly.
+            real x = 0.5 * (grid.x_bounds[i] + grid.x_bounds[i + 1]);
+            real y = 0.5 * (grid.y_bounds[j] + grid.y_bounds[j + 1]);
+            real z = 0.5 * (grid.z_bounds[k] + grid.z_bounds[k + 1]);
             return shape->contains(x, y, z);
         }
         return true;  // Fallback: bounding box only
