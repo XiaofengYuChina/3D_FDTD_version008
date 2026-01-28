@@ -21,7 +21,7 @@ struct TLSMaterial {
 
 // Format: {name, lambda0, gamma, tau, N0, inversion_fraction}
 inline const std::vector<TLSMaterial> LIBRARY = {
-    {"gain_1500nm", 1500e-9, 7e12, 1e-12, 1e25, 1.0},
+    {"gain_1500nm", 1500e-9, 7e12, 1e-10, 1e23, 0.5},
 };
 
 inline const TLSMaterial* find(const std::string& name) {
