@@ -58,6 +58,12 @@ def main():
                         help='Y-axis limits')
     parser.add_argument('--freq-max', type=float, default=None,
                         help='Maximum frequency for FFT plot (THz)')
+    parser.add_argument('--wavelength', action='store_true',
+                        help='Use wavelength (nm) as x-axis for FFT spectrum')
+    parser.add_argument('--wl-min', type=float, default=None,
+                        help='Minimum wavelength in nm (default: 200)')
+    parser.add_argument('--wl-max', type=float, default=None,
+                        help='Maximum wavelength in nm (default: 2000)')
     parser.add_argument('--save', type=str, default=None,
                         help='Save to file')
     parser.add_argument('--dpi', type=int, default=150,
@@ -135,24 +141,43 @@ def main():
         freq = np.fft.rfftfreq(n_samples, dt_eff)
         freq_THz = freq * 1e-12  # Convert to THz
 
-        for comp, values in data.items():
-            spectrum = np.abs(np.fft.rfft(values))
-            if args.log_fft:
-                spectrum = np.log10(spectrum + 1e-30)
-            ax.plot(freq_THz, spectrum, label=comp, linewidth=1)
+        if args.wavelength:
+            # Wavelength mode: lambda = c / f
+            c = 2.99792458e8  # speed of light (m/s)
+            # Skip DC component (freq=0)
+            freq_nonzero = freq[1:]
+            wavelength_nm = c / freq_nonzero * 1e9  # Convert m to nm
 
-        ax.set_xlabel('Frequency (THz)')
+            for comp, values in data.items():
+                spectrum = np.abs(np.fft.rfft(values))
+                spec_nonzero = spectrum[1:]
+                if args.log_fft:
+                    spec_nonzero = np.log10(spec_nonzero + 1e-30)
+                ax.plot(wavelength_nm, spec_nonzero, label=comp, linewidth=1)
+
+            ax.set_xlabel('Wavelength (nm)')
+            wl_lo = args.wl_min if args.wl_min is not None else 200
+            wl_hi = args.wl_max if args.wl_max is not None else 2000
+            ax.set_xlim(wl_lo, wl_hi)
+        else:
+            # Frequency mode
+            for comp, values in data.items():
+                spectrum = np.abs(np.fft.rfft(values))
+                if args.log_fft:
+                    spectrum = np.log10(spectrum + 1e-30)
+                ax.plot(freq_THz, spectrum, label=comp, linewidth=1)
+
+            ax.set_xlabel('Frequency (THz)')
+            if args.freq_max:
+                ax.set_xlim(0, args.freq_max)
+            else:
+                ax.set_xlim(0, min(freq_THz[-1], 1000))
+
         if args.log_fft:
             ax.set_ylabel('log10(|FFT|)')
         else:
             ax.set_ylabel('|FFT|')
         ax.set_title(f'Spectrum at ({probe_x:.0f}, {probe_y:.0f}, {probe_z:.0f}) nm')
-
-        if args.freq_max:
-            ax.set_xlim(0, args.freq_max)
-        else:
-            # Auto limit to meaningful range
-            ax.set_xlim(0, min(freq_THz[-1], 1000))
 
         ax.grid(True, alpha=0.3)
         ax.legend()
