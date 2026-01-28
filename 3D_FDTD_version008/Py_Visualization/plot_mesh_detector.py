@@ -3,8 +3,10 @@
 plot_mesh_detector.py - Visualize refractive index distribution and mesh grid
 
 Usage:
-    python plot_mesh_detector.py --name mesh_info
-    python plot_mesh_detector.py --name mesh_info --show-grid --save mesh_plot.png
+    python plot_mesh_detector.py --name mesh_z_500nm
+    python plot_mesh_detector.py --name mesh_y_2000nm
+    python plot_mesh_detector.py --name mesh_z_500nm --show-grid
+    python plot_mesh_detector.py --name mesh_y_2000nm --show-grid
 
 Features:
 - Reads metadata.json automatically to determine slice plane and dimensions
