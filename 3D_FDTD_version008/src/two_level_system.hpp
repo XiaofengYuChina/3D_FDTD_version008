@@ -10,6 +10,7 @@
 #include "global_function.hpp"
 #include "user_config.hpp"
 #include "omp_config.hpp"
+#include "structure_material.hpp"
 
 struct StructureTLSConfig;
 
@@ -425,9 +426,18 @@ struct TLSRegion {
     size_t k0 = 0, k1 = 0;
     TwoLevelParams params;
     real inversion_fraction = 1.0;
+    const Shape* shape = nullptr;  // Shape geometry for precise containment check
 
-    bool contains(size_t i, size_t j, size_t k) const {
-        return (i >= i0 && i < i1 && j >= j0 && j < j1 && k >= k0 && k < k1);
+    bool contains(size_t i, size_t j, size_t k, const GridSpacing& grid) const {
+        if (!(i >= i0 && i < i1 && j >= j0 && j < j1 && k >= k0 && k < k1))
+            return false;
+        if (shape) {
+            real x = grid.cell_center_physical_x(i);
+            real y = grid.cell_center_physical_y(j);
+            real z = grid.cell_center_physical_z(k);
+            return shape->contains(x, y, z);
+        }
+        return true;  // Fallback: bounding box only
     }
 
     void get_physical_bounds(const GridSpacing& grid,
@@ -447,21 +457,23 @@ struct TLSRegion {
 
         real total_volume = 0.0;
         real N0_density = params.N0_total;
+        size_t n_cells = 0;
 
         for (size_t i = i0; i < i1; ++i) {
             for (size_t j = j0; j < j1; ++j) {
                 for (size_t k = k0; k < k1; ++k) {
+                    if (!contains(i, j, k, grid)) continue;
                     size_t id = idx3(i, j, k, state.NyT, state.NzT);
                     state.Ndip[id] = N0_density;
                     state.Nu[id] = inversion_fraction * N0_density;
                     state.Ng[id] = (1.0 - inversion_fraction) * N0_density;
                     state.Ng0[id] = N0_density;
                     total_volume += grid.dx[i] * grid.dy[j] * grid.dz[k];
+                    ++n_cells;
                 }
             }
         }
 
-        size_t n_cells = (i1 - i0) * (j1 - j0) * (k1 - k0);
         std::cout << "[TLSRegion " << name << "] Initialized:\n";
         std::cout << "  Bounds: [" << i0 << "," << i1 << ") x [" << j0 << "," << j1 << ") x [" << k0 << "," << k1 << ")\n";
         std::cout << "  Cells: " << n_cells << ", Volume: " << total_volume * 1e18 << " μm³\n";
@@ -481,7 +493,8 @@ public:
     void add_region_from_structure(
         const GridSpacing& grid,
         real x_min, real x_max, real y_min, real y_max, real z_min, real z_max,
-        const TwoLevelParams& params, real inversion_frac, const std::string& name = ""
+        const TwoLevelParams& params, real inversion_frac,
+        const Shape* structure_shape = nullptr, const std::string& name = ""
     ) {
         TLSRegion region;
         region.region_id = regions.size();
@@ -496,6 +509,7 @@ public:
 
         region.params = params;
         region.inversion_fraction = inversion_frac;
+        region.shape = structure_shape;
 
         regions.push_back(region);
         std::cout << "[TLSManager] Added region '" << region.name << "' at physical coords ["
@@ -522,6 +536,7 @@ public:
             for (size_t i = region.i0; i < region.i1; ++i) {
                 for (size_t j = region.j0; j < region.j1; ++j) {
                     for (size_t k = region.k0; k < region.k1; ++k) {
+                        if (!region.contains(i, j, k, grid)) continue;
                         cell_region_map[idx3(i, j, k, NyT, NzT)] = static_cast<int>(r);
                     }
                 }

@@ -135,6 +135,7 @@ int main() {
                 bb.z0 - pml_z, bb.z1 - pml_z,
                 region_params,
                 tls_cfg.inversion_fraction,
+                item->shape.get(),
                 region_name
             );
         }
