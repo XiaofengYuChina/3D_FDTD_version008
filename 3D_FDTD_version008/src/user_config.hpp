@@ -47,7 +47,7 @@ constexpr size_t NZ = 100;
 
 // Time stepping
 constexpr double CFL_FACTOR = 0.99;  // Must be < 1 for stability
-constexpr size_t N_STEPS = 10000;
+constexpr size_t N_STEPS = 100000;
 constexpr size_t SAVE_EVERY = 10;
 
 // Boundary conditions: 0 = PEC, 1 = CPML (absorbing)
@@ -79,7 +79,7 @@ struct DipoleSourceDef {
 };
 
 inline const std::vector<DipoleSourceDef> DIPOLE_SOURCES = {
-    {true, 1100e-9, 2000e-9, 500e-9, 1e-5, 0.0, 1500e-9, 5e-15, 2.4e13, 3.0, 0, 2},
+    {true, 1100e-9, 2000e-9, 500e-9, 1e-7, 0.0, 1500e-9, 100e-15, 0, 3.0, 1, 2},
 };
 
 struct PlaneWaveSourceDef {
@@ -99,31 +99,28 @@ struct PlaneWaveSourceDef {
 
 inline const std::vector<PlaneWaveSourceDef> PLANE_WAVE_SOURCES = {};
 
-// Detector field components: 0=Ex, 1=Ey, 2=Ez, 3=Hx, 4=Hy, 5=Hz,
-//   6=E_magnitude, 7=H_magnitude, 8=Sx, 9=Sy, 10=Sz, 11=S_magnitude
-// Slice planes: 0=XY (z=const), 1=XZ (y=const), 2=YZ (x=const)
-
 inline const std::string RUN_TAG = "3D_FDTD_v008_output";
 
 struct MeshDetectorDef {
     bool enabled;
     std::string name;
-    double slice_position;  // Position along normal axis (m)
-    int slice_plane;
+    double slice_position;      // Position along normal axis (m)
+    int slice_plane;            // Slice planes: 0=XY (z=const), 1=XZ (y=const), 2=YZ (x=const)
     bool export_mesh_lines;
     bool export_spacing;
 };
 
 inline const std::vector<MeshDetectorDef> MESH_DETECTORS = {
-    {true, "mesh_info", 500e-9, 0, true, true},
+    {true, "mesh_z_500nm", 500e-9, 0, true, true},
+    {true, "mesh_y_2000nm", 2000e-9, 1, true, true},
 };
 
 struct FieldMovie2DDef {
     bool enabled;
     std::string name;
-    int field_component;
-    int slice_plane;
-    double slice_position;  // m
+    int field_component;        // Detector field components: 0=Ex, 1=Ey, 2=Ez, 3=Hx, 4=Hy, 5=Hz, 6=E_magnitude, 7=H_magnitude, 8=Sx, 9=Sy, 10=Sz, 11=S_magnitude
+    int slice_plane;            // Slice planes: 0=XY (z=const), 1=XZ (y=const), 2=YZ (x=const)
+    double slice_position;      // m
     std::string frame_pattern;
 };
 
@@ -134,8 +131,8 @@ inline const std::vector<FieldMovie2DDef> FIELD_MOVIE_2D_DETECTORS = {
 struct PointFieldDetectorDef {
     bool enabled;
     std::string name;
-    double x, y, z;  // m
-    std::vector<int> components;
+    double x, y, z;                 // m
+    std::vector<int> components;    // Detector field components: 0=Ex, 1=Ey, 2=Ez, 3=Hx, 4=Hy, 5=Hz, 6=E_magnitude, 7=H_magnitude, 8=Sx, 9=Sy, 10=Sz, 11=S_magnitude
 };
 
 inline const std::vector<PointFieldDetectorDef> POINT_FIELD_DETECTORS = {
@@ -192,7 +189,7 @@ struct MeshOverrideRegion {
 
 // When regions overlap, the smallest dx/dy/dz wins
 inline const std::vector<MeshOverrideRegion> MESH_OVERRIDE_REGIONS = {
-    {true, 1000e-9, 3000e-9, 1000e-9, 3000e-9, 400e-9, 600e-9, 20e-9, 20e-9, 20e-9},
+    {true, 1000e-9, 3000e-9, 1000e-9, 3000e-9, 400e-9, 600e-9, 50e-9, 50e-9, 20e-9},
 };
 
 namespace PhysicalConstants {
