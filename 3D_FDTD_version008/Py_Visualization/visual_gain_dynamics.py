@@ -86,8 +86,10 @@ def main():
     axes[2].set_ylim(inv_sym.min() - margin, inv_sym.max() + margin)
 
     plt.tight_layout()
-    plt.savefig('population_dynamics.png', dpi=150, bbox_inches='tight')
-    print("Saved: population_dynamics.png")
+    script_dir = Path(__file__).resolve().parent
+    save_path = script_dir / 'populations_dynamics.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f"Saved: {save_path}")
     plt.close()
 
     # Save dedicated inv_sym figure
@@ -109,8 +111,9 @@ def main():
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(inv_sym.min() - margin, inv_sym.max() + margin)
 
-    fig2.savefig('tls_normalized_inversion_sym.png', dpi=150, bbox_inches='tight')
-    print("Saved: tls_normalized_inversion_sym.png")
+    save_path2 = script_dir / 'populations_normalized_inversion_sym.png'
+    fig2.savefig(save_path2, dpi=150, bbox_inches='tight')
+    print(f"Saved: {save_path2}")
     plt.close(fig2)
 
     # Summary

@@ -114,6 +114,8 @@ axes[2].set_ylabel('y')
 plt.colorbar(im3, ax=axes[2], label='Δ(Nu - Ng) [m⁻³]')
 
 plt.tight_layout()
-plt.savefig('spatial_gain_depletion.png', dpi=150, bbox_inches='tight')
-print("\nSaved: spatial_gain_depletion.png")
+script_dir = Path(__file__).resolve().parent
+save_path = script_dir / 'populations_spatial_gain_depletion.png'
+plt.savefig(save_path, dpi=150, bbox_inches='tight')
+print(f"\nSaved: {save_path}")
 plt.close()

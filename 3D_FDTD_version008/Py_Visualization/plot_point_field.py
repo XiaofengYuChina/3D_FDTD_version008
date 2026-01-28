@@ -176,13 +176,14 @@ def main():
 
     plt.tight_layout()
 
-    # Save or show
+    # Save or show - save to script directory with detector name
+    script_dir = Path(__file__).resolve().parent
     if args.save:
         plt.savefig(args.save, dpi=args.dpi, bbox_inches='tight')
         print(f"Saved to: {args.save}")
     else:
         suffix = "_spectrum" if args.fft else "_timeseries"
-        default_save = detector_path / f"{args.name}{suffix}.png"
+        default_save = script_dir / f"{args.name}{suffix}.png"
         plt.savefig(default_save, dpi=args.dpi, bbox_inches='tight')
         print(f"Saved to: {default_save}")
 

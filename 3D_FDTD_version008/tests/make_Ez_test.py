@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FFMpegWriter
 from matplotlib.colors import SymLogNorm, LinearSegmentedColormap
 import imageio_ffmpeg
+from pathlib import Path
 from load_grid import find_output_path
 
 matplotlib.rcParams['animation.ffmpeg_path'] = imageio_ffmpeg.get_ffmpeg_exe()
@@ -104,8 +105,10 @@ text_box = ax.text(0.02, 0.98, '', transform=ax.transAxes,
 # Generate movie
 print("Generating MP4...")
 try:
+    script_dir = Path(__file__).resolve().parent
+    save_path = script_dir / "Ez_center_evolution_enhanced.mp4"
     writer = FFMpegWriter(fps=20, codec="libx264", bitrate=6000)
-    with writer.saving(fig, "ez_evolution_enhanced.mp4", dpi=150):
+    with writer.saving(fig, str(save_path), dpi=150):
         for i, fp in enumerate(frame_files):
             z = np.fromfile(fp, dtype=np.float64).reshape(NxT, NyT).T
             frame_max = np.max(np.abs(z))
@@ -118,7 +121,7 @@ try:
             writer.grab_frame()
             if (i + 1) % 50 == 0:
                 print(f"MP4 progress: {i + 1}/{len(frame_files)}")
-    print("Saved: ez_evolution_enhanced.mp4")
+    print(f"Saved: {save_path}")
 except Exception as e:
     print(f"Error: {e}")
 finally:

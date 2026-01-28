@@ -160,9 +160,12 @@ def main():
 
     X, Y = np.meshgrid(x_bounds, y_bounds, indexing='ij')
 
+    # Save outputs to script directory
+    script_dir = Path(__file__).resolve().parent
+
     if args.movie:
         # Generate movie
-        output_file = args.save or str(detector_path / f"{args.name}_movie.mp4")
+        output_file = args.save or str(script_dir / f"{args.name}_movie.mp4")
 
         fig, ax = plt.subplots(figsize=(10, 8))
 
@@ -235,7 +238,7 @@ def main():
         ax.set_aspect('equal')
         plt.tight_layout()
 
-        output_file = args.save or str(detector_path / f"{args.name}_frame{frame_idx:04d}.png")
+        output_file = args.save or str(script_dir / f"{args.name}_frame{frame_idx:04d}.png")
         plt.savefig(output_file, dpi=args.dpi, bbox_inches='tight')
         print(f"Saved to: {output_file}")
         plt.close()
