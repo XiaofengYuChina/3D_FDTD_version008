@@ -164,6 +164,7 @@ def main():
     plt.tight_layout()
 
     # Save or show
+    script_dir = Path(__file__).resolve().parent
     if args.save:
         plt.savefig(args.save, dpi=args.dpi, bbox_inches='tight')
         print(f"Saved to: {args.save}")
@@ -172,8 +173,8 @@ def main():
         plt.switch_backend('TkAgg')
         plt.show()
     elif not args.save:
-        # Default: save to detector directory
-        default_save = detector_path / "refractive_index_plot.png"
+        # Default: save to script directory with detector name
+        default_save = script_dir / f"{args.name}_refractive_index_plot.png"
         plt.savefig(default_save, dpi=args.dpi, bbox_inches='tight')
         print(f"Saved to: {default_save}")
 
