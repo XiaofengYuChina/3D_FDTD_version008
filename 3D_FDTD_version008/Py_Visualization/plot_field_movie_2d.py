@@ -5,6 +5,7 @@ plot_field_movie_2d.py - Visualize 2D field evolution as movie or snapshots
 Usage:
     python plot_field_movie_2d.py --name Ez_movie
     python plot_field_movie_2d.py --name Ez_movie --movie --fps 30
+    python plot_field_movie_2d.py --name Ez_movie --movie --fps 30 --vmin=-1 --vmax=1
     python plot_field_movie_2d.py --name Ex_movie --frame 100 --save ex_frame100.png
 
 Features:
