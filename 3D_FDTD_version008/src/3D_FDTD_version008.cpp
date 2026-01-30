@@ -12,7 +12,7 @@
 #include "two_level_system.hpp"
 #include "two_level_detectors.hpp"
 #include "stability_monitor.hpp"
-#include "parallel_domain_v2.hpp"
+#include "parallel_domain.hpp"
 
 #include <iostream>
 #include <vector>
@@ -64,17 +64,17 @@ int main() {
     std::vector<real> Hx(Ntot, 0), Hy(Ntot, 0), Hz(Ntot, 0);
     std::vector<real> Jx(Ntot, 0), Jy(Ntot, 0), Jz(Ntot, 0);
 
-    ParallelV2::DomainDecomposition domain_decomp;
-    ParallelV2::ParallelConfig parallel_config;
+    Parallel::DomainDecomposition domain_decomp;
+    Parallel::ParallelConfig parallel_config;
     parallel_config.enabled = UserConfig::PARALLEL_ENABLED;
     parallel_config.num_domains = UserConfig::PARALLEL_NUM_DOMAINS;
-    parallel_config.axis = static_cast<ParallelV2::DecompAxis>(UserConfig::PARALLEL_DECOMP_AXIS);
+    parallel_config.axis = static_cast<Parallel::DecompAxis>(UserConfig::PARALLEL_DECOMP_AXIS);
     parallel_config.halo_width = UserConfig::PARALLEL_HALO_WIDTH;
     parallel_config.npml = ctx.bc->npml();
 
     if (parallel_config.enabled) {
         std::cout << "\n========================================\n";
-        std::cout << "Initializing Parallel Domain Decomposition V2\n";
+        std::cout << "Initializing Parallel Domain Decomposition\n";
         std::cout << "========================================\n";
 
         domain_decomp.initialize(
@@ -204,7 +204,7 @@ int main() {
     std::cout << "\n========================================\n";
     std::cout << "Starting FDTD Time-Stepping\n";
     if (use_parallel) {
-        std::cout << "Mode: PARALLEL V2 (" << domain_decomp.num_domains() << " domains)\n";
+        std::cout << "Mode: PARALLEL (" << domain_decomp.num_domains() << " domains)\n";
         std::cout << "  - TRUE domain decomposition (each subdomain has own PML)\n";
         std::cout << "  - Only O(N^2) halo exchange per step (no O(N^3) scatter/gather)\n";
     } else {
@@ -222,7 +222,7 @@ int main() {
         domain_decomp.initial_scatter(Ex, Ey, Ez, Hx, Hy, Hz);
         if (any_tls_enabled) {
             domain_decomp.initialize_tls(tls_state);
-            std::cout << "[ParallelV2] TLS will be computed locally in each subdomain\n";
+            std::cout << "[Parallel] TLS will be computed locally in each subdomain\n";
             std::cout << "  - " << tls_manager.num_regions() << " TLS region(s) bound to structures\n";
             std::cout << "  - NO gather/scatter needed for TLS during computation\n";
         }
@@ -230,7 +230,7 @@ int main() {
 
     for (size_t n = 0; n < P.nSteps; ++n) {
         if (use_parallel) {
-            ParallelV2::parallel_clear_J(domain_decomp);
+            Parallel::parallel_clear_J(domain_decomp);
             for (auto& src : rt.sources) {
                 src->inject_half_step(n, P.dt, Jx, Jy, Jz);
             }
@@ -248,12 +248,12 @@ int main() {
                 }
             }
 
-            ParallelV2::parallel_update_H(domain_decomp);
+            Parallel::parallel_update_H(domain_decomp);
 
             if (any_tls_enabled) {
-                ParallelV2::parallel_update_E_with_tls(domain_decomp, P.dt, tls_params);
+                Parallel::parallel_update_E_with_tls(domain_decomp, P.dt, tls_params);
             } else {
-                ParallelV2::parallel_update_E(domain_decomp);
+                Parallel::parallel_update_E(domain_decomp);
             }
 
             bool need_global_data = (n % UserConfig::STABILITY_MONITOR_INTERVAL == 0) ||
